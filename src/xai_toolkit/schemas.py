@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
-# --- Explainer output (what SHAP computation produces) ---
+# --- Explainer outputs (what computation produces) ---
 
 
 class ShapResult(BaseModel):
@@ -30,7 +30,59 @@ class ShapResult(BaseModel):
     feature_names: list[str] = Field(description="All feature names in order")
 
 
-# --- Tool response (what the MCP tool returns) ---
+class FeatureImportance(BaseModel):
+    """A single feature's global importance."""
+
+    name: str
+    importance: float = Field(description="Mean absolute SHAP value")
+    direction: str = Field(description="'positive' or 'negative' average effect")
+    mean_shap: float = Field(description="Mean SHAP value (signed)")
+
+
+class ModelSummary(BaseModel):
+    """Summary statistics about a model."""
+
+    model_type: str
+    accuracy: float
+    n_features: int
+    n_train_samples: int
+    n_test_samples: int
+    target_names: list[str]
+    top_features: list[FeatureImportance]
+
+
+class PartialDependenceResult(BaseModel):
+    """Output from partial dependence + ICE computation."""
+
+    feature_name: str
+    feature_values: list[float] = Field(description="Grid of feature values")
+    predictions: list[float] = Field(description="Mean prediction at each grid point (PDP)")
+    ice_curves: list[list[float]] = Field(
+        default_factory=list,
+        description="Per-sample prediction curves (ICE). Each inner list is one sample's predictions across the grid.",
+    )
+    feature_min: float
+    feature_max: float
+    prediction_min: float
+    prediction_max: float
+
+
+class DatasetDescription(BaseModel):
+    """Summary statistics about a dataset."""
+
+    n_samples: int
+    n_features: int
+    feature_names: list[str]
+    class_distribution: dict[str, int] = Field(
+        description="Class label → count mapping"
+    )
+    missing_values: int = Field(description="Total missing values across all features")
+    feature_stats: dict[str, dict[str, float]] = Field(
+        description="Feature name → {mean, std, min, max}"
+    )
+
+
+# --- Tool response (what MCP tools return) — ADR-005 ---
 
 
 class ToolMetadata(BaseModel):
@@ -51,6 +103,21 @@ class ExplainPredictionResponse(BaseModel):
 
     narrative: str = Field(description="Plain English explanation")
     evidence: dict = Field(description="Structured SHAP data backing the narrative")
+    metadata: ToolMetadata
+    plot_base64: str | None = Field(
+        default=None, description="Optional base64-encoded PNG"
+    )
+
+
+class ToolResponse(BaseModel):
+    """Generic response for all tools (ADR-005).
+
+    Every tool returns this same shape: narrative + evidence + metadata.
+    This consistency means the LLM always knows what to expect.
+    """
+
+    narrative: str = Field(description="Plain English interpretation")
+    evidence: dict = Field(description="Structured data backing the narrative")
     metadata: ToolMetadata
     plot_base64: str | None = Field(
         default=None, description="Optional base64-encoded PNG"

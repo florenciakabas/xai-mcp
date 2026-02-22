@@ -1,0 +1,18 @@
+scenario: "Multi-turn conversation works across all tools"
+day: 2
+id: D2-S6
+
+given:
+  vs_code_copilot_with_all_tools: true
+
+when:
+  user_asks_in_sequence:
+    - "What models are available?"
+    - "Summarize the XGBoost model"
+    - "Which features matter most?"
+    - "How does mean radius affect predictions?"
+
+then:
+  - each_question_calls_correct_tool: true
+  - conversation_is_coherent: true
+  - no_tool_call_failures: true

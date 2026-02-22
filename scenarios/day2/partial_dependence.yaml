@@ -1,0 +1,19 @@
+scenario: "get_partial_dependence describes a feature relationship"
+day: 2
+id: D2-S3
+
+given:
+  model: "xgboost_breast_cancer"
+  feature: "mean radius"
+
+when:
+  tool_called: "get_partial_dependence"
+
+then:
+  - response_has_field: "narrative"
+  - narrative_describes_relationship: true      # how feature affects prediction
+  - narrative_contains_feature_range: true      # min and max of feature
+  - narrative_contains_prediction_range: true   # corresponding prediction range
+  - response_has_field: "evidence"
+  - evidence_has: "pdp_values"                  # array of x,y pairs
+  - response_has_field: "metadata"

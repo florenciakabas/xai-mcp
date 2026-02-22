@@ -1,0 +1,18 @@
+scenario: "describe_dataset returns data overview"
+day: 2
+id: D2-S4
+
+given:
+  model: "xgboost_breast_cancer"
+
+when:
+  tool_called: "describe_dataset"
+
+then:
+  - response_has_field: "narrative"
+  - narrative_contains_sample_count: true
+  - narrative_contains_feature_count: true
+  - narrative_contains_class_distribution: true
+  - narrative_mentions_missing_values: true     # even if zero
+  - response_has_field: "evidence"
+  - response_has_field: "metadata"

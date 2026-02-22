@@ -1,0 +1,19 @@
+scenario: "summarize_model returns coherent overview"
+day: 2
+id: D2-S1
+
+given:
+  model: "xgboost_breast_cancer"
+
+when:
+  tool_called: "summarize_model"
+
+then:
+  - response_has_field: "narrative"
+  - narrative_contains_model_type: true        # "XGBoost" or "gradient boosted"
+  - narrative_contains_accuracy: true          # performance metric
+  - narrative_contains_feature_count: true     # number of features
+  - narrative_contains_top_features: 3         # top 3 by importance
+  - narrative_readable_by_non_data_scientist: true
+  - response_has_field: "evidence"
+  - response_has_field: "metadata"

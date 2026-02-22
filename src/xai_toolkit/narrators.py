@@ -9,7 +9,13 @@ structure (extract data, rank features, format template) but the template
 content varies by explanation type.
 """
 
-from xai_toolkit.schemas import ShapResult
+from xai_toolkit.schemas import (
+    DatasetDescription,
+    FeatureImportance,
+    ModelSummary,
+    PartialDependenceResult,
+    ShapResult,
+)
 
 
 def narrate_prediction(shap_result: ShapResult, top_n: int = 3) -> str:
@@ -45,10 +51,8 @@ def narrate_prediction(shap_result: ShapResult, top_n: int = 3) -> str:
         # Determine direction relative to positive class
         if shap_val > 0:
             direction = "pushing toward"
-            direction_label = "positive class"
         else:
             direction = "pushing away from"
-            direction_label = "positive class"
 
         entry = {
             "name": name,
@@ -89,7 +93,7 @@ def narrate_prediction(shap_result: ShapResult, top_n: int = 3) -> str:
             narrative += f"{len(top_drivers)} factors: "
 
         driver_descriptions = []
-        for i, d in enumerate(top_drivers):
+        for d in top_drivers:
             sign = "+" if d["shap_value"] > 0 else ""
             desc = (
                 f"{d['name']} = {d['feature_value']:.4f} "
@@ -118,6 +122,202 @@ def narrate_prediction(shap_result: ShapResult, top_n: int = 3) -> str:
             f" The top opposing factor is {opp['name']} = "
             f"{opp['feature_value']:.4f} ({opp['direction']} the positive "
             f"class by {sign}{opp['shap_value']:.4f})."
+        )
+
+    return narrative
+
+
+def narrate_model_summary(summary: ModelSummary) -> str:
+    """Convert a model summary into a plain-English overview.
+
+    Args:
+        summary: Output from compute_model_summary().
+
+    Returns:
+        An English paragraph describing the model and its top features.
+
+    Example:
+        >>> narrate_model_summary(summary)
+        "This is an XGBClassifier trained to distinguish between malignant
+         and benign cases. It uses 30 features and achieves 95.6% accuracy..."
+    """
+    # Target names as a readable list
+    targets = " and ".join(summary.target_names)
+
+    narrative = (
+        f"This is a {summary.model_type} model trained to distinguish "
+        f"between {targets} cases. It uses {summary.n_features} features "
+        f"and achieves {summary.accuracy:.1%} accuracy on the test set "
+        f"({summary.n_test_samples} samples)."
+    )
+
+    # Top features
+    if summary.top_features:
+        narrative += (
+            f" The most influential features are: "
+        )
+        feature_parts = []
+        for i, feat in enumerate(summary.top_features):
+            rank_word = ["most", "second most", "third most", "fourth most", "fifth most"]
+            rank = rank_word[i] if i < len(rank_word) else f"#{i+1}"
+            feature_parts.append(
+                f"{feat.name} ({rank} important, average impact "
+                f"{feat.importance:.4f}, generally pushes {feat.direction})"
+            )
+
+        if len(feature_parts) == 1:
+            narrative += feature_parts[0]
+        elif len(feature_parts) == 2:
+            narrative += f"{feature_parts[0]} and {feature_parts[1]}"
+        else:
+            narrative += (
+                ", ".join(feature_parts[:-1]) + f", and {feature_parts[-1]}"
+            )
+        narrative += "."
+
+    return narrative
+
+
+def narrate_feature_comparison(
+    importances: list[FeatureImportance],
+    top_n: int = 10,
+) -> str:
+    """Convert ranked feature importances into comparative English.
+
+    Args:
+        importances: Sorted list from compute_global_feature_importance().
+        top_n: How many features to describe.
+
+    Returns:
+        An English paragraph ranking features by importance.
+
+    Example:
+        >>> narrate_feature_comparison(importances)
+        "The most important feature is worst_radius (mean |SHAP| = 0.15)..."
+    """
+    features = importances[:top_n]
+
+    if not features:
+        return "No feature importance data is available."
+
+    narrative = (
+        f"Ranked by importance (mean absolute SHAP value across all samples), "
+        f"the top {len(features)} features are: "
+    )
+
+    parts = []
+    for i, feat in enumerate(features, 1):
+        sign_desc = (
+            "tends to increase risk" if feat.direction == "positive"
+            else "tends to decrease risk"
+        )
+        parts.append(
+            f"#{i} {feat.name} (importance: {feat.importance:.4f}, "
+            f"{sign_desc})"
+        )
+
+    narrative += "; ".join(parts) + "."
+
+    # Add a summary comparison
+    if len(features) >= 2:
+        ratio = features[0].importance / features[1].importance
+        if ratio > 1.5:
+            narrative += (
+                f" Notably, {features[0].name} is {ratio:.1f}× more "
+                f"influential than the next most important feature."
+            )
+
+    return narrative
+
+
+def narrate_partial_dependence(pdp: PartialDependenceResult) -> str:
+    """Convert partial dependence data into an English description.
+
+    Args:
+        pdp: Output from compute_partial_dependence().
+
+    Returns:
+        An English paragraph describing how the feature affects predictions.
+
+    Example:
+        >>> narrate_partial_dependence(pdp)
+        "As mean radius increases from 6.98 to 28.11, the predicted
+         probability changes from 12.3% to 89.1%..."
+    """
+    # Determine the overall trend
+    pred_start = pdp.predictions[0]
+    pred_end = pdp.predictions[-1]
+    change = pred_end - pred_start
+
+    if change > 0.05:
+        trend = "increases"
+    elif change < -0.05:
+        trend = "decreases"
+    else:
+        trend = "remains relatively stable"
+
+    narrative = (
+        f"As {pdp.feature_name} increases from {pdp.feature_min:.2f} to "
+        f"{pdp.feature_max:.2f}, the predicted probability {trend} "
+        f"from {pdp.prediction_min:.1%} to {pdp.prediction_max:.1%}."
+    )
+
+    # Add detail about the range of effect
+    pred_range = pdp.prediction_max - pdp.prediction_min
+    narrative += (
+        f" The total effect range is {pred_range:.1%} "
+        f"(from {pdp.prediction_min:.1%} to {pdp.prediction_max:.1%})."
+    )
+
+    # Find the steepest change region (approximate inflection point)
+    if len(pdp.predictions) > 2:
+        diffs = [
+            abs(pdp.predictions[i + 1] - pdp.predictions[i])
+            for i in range(len(pdp.predictions) - 1)
+        ]
+        max_change_idx = diffs.index(max(diffs))
+        steep_start = pdp.feature_values[max_change_idx]
+        steep_end = pdp.feature_values[max_change_idx + 1]
+        narrative += (
+            f" The steepest change occurs between "
+            f"{pdp.feature_name} = {steep_start:.2f} and {steep_end:.2f}."
+        )
+
+    return narrative
+
+
+def narrate_dataset(description: DatasetDescription) -> str:
+    """Convert dataset statistics into an English overview.
+
+    Args:
+        description: Output from compute_dataset_description().
+
+    Returns:
+        An English paragraph describing the dataset.
+
+    Example:
+        >>> narrate_dataset(description)
+        "The dataset contains 114 samples with 30 features..."
+    """
+    narrative = (
+        f"The dataset contains {description.n_samples} samples with "
+        f"{description.n_features} features."
+    )
+
+    # Class distribution
+    class_parts = [
+        f"{name}: {count} ({count / description.n_samples:.1%})"
+        for name, count in description.class_distribution.items()
+    ]
+    narrative += f" Class distribution: {', '.join(class_parts)}."
+
+    # Missing values
+    if description.missing_values == 0:
+        narrative += " There are no missing values in the dataset."
+    else:
+        narrative += (
+            f" There are {description.missing_values} missing values "
+            f"across all features."
         )
 
     return narrative

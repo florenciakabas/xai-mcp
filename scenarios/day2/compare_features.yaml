@@ -1,0 +1,20 @@
+scenario: "compare_features returns ranked list in English"
+day: 2
+id: D2-S2
+
+given:
+  model: "xgboost_breast_cancer"
+
+when:
+  tool_called: "compare_features"
+
+then:
+  - response_has_field: "narrative"
+  - narrative_contains_ordered_features: true
+  - each_feature_has_name: true
+  - each_feature_has_magnitude: true
+  - each_feature_has_direction: true
+  - features_sorted_by_importance: true
+  - narrative_uses_comparative_language: true   # "most", "followed by"
+  - response_has_field: "evidence"
+  - response_has_field: "metadata"
