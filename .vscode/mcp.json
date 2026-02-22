@@ -1,0 +1,9 @@
+{
+    "servers": {
+        "xai-toolkit": {
+            "type": "stdio",
+            "command": "uv",
+            "args": ["run", "python", "-m", "xai_toolkit.server"]
+        }
+    }
+}

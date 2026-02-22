@@ -1,0 +1,14 @@
+scenario: "Context engineering artifacts exist in the repository"
+day: 1
+id: D1-S5
+
+given:
+  location: "repository root"
+
+then:
+  - file_exists: "AGENTS.md"
+  - file_exists: ".github/copilot-instructions.md"
+  - file_exists: "docs/decisions/001-separation-of-concerns.md"
+  - file_exists: "docs/decisions/002-deterministic-narratives.md"
+  - file_exists: "specs/tools.spec.md"
+  - file_exists: "scenarios/day1/explain_single_prediction.yaml"

@@ -1,0 +1,28 @@
+scenario: "Explain why a single sample was classified"
+day: 1
+id: D1-S2
+
+given:
+  model: "xgboost_breast_cancer"
+  sample_index: 42
+
+when:
+  tool_called: "explain_prediction"
+
+then:
+  - response_has_field: "narrative"
+  - narrative_is_type: "str"
+  - narrative_length_gt: 50
+  - narrative_contains: "classified this sample as"
+  - narrative_contains: "probability"
+  - narrative_mentions_top_n_features: 3
+  - each_feature_has_direction: true
+  - each_feature_has_magnitude: true
+  - response_has_field: "evidence"
+  - evidence_has: "shap_values"
+  - evidence_has: "feature_names"
+  - evidence_has: "prediction"
+  - evidence_has: "base_value"
+  - response_has_field: "metadata"
+  - metadata_has: "model_id"
+  - metadata_has: "timestamp"
