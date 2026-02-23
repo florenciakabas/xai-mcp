@@ -3,9 +3,24 @@
 This module computes explainability artifacts from models and data.
 All functions return structured data (Pydantic models or dicts),
 never English text. Narrative generation is handled by narrators.py.
+
+Two modes of operation:
+  1. ON-THE-FLY (PoC): Compute SHAP directly from a model + data.
+     Used during the sprint for interactive exploration.
+  2. FROM PIPELINE (Production path): Read pre-computed SHAP artifacts
+     produced by the Kedro explainability pipeline (xai-xgboost-clf repo).
+     The pipeline handles batch computation, background selection, and
+     MLflow logging. Our toolkit reads its outputs and translates them
+     into English narratives via narrators.py.
+
+For production use, SHAP values should be pre-computed by the Kedro
+explainability pipeline. The on-the-fly computation here is for PoC
+and interactive exploration only.
 """
 
 import hashlib
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -343,3 +358,203 @@ def compute_dataset_description(
         missing_values=int(X.isna().sum().sum()),
         feature_stats=feature_stats,
     )
+
+
+# ---------------------------------------------------------------------------
+# Pipeline bridge: read pre-computed artifacts from Kedro explainability
+# pipeline (xai-xgboost-clf repo). This is the PRODUCTION path.
+# ---------------------------------------------------------------------------
+
+
+def _load_pipeline_metadata(artifacts_dir: Path) -> dict:
+    """Read and validate the pipeline's shap_metadata.json.
+
+    Args:
+        artifacts_dir: Directory containing pipeline output artifacts.
+
+    Returns:
+        Parsed metadata dictionary.
+
+    Raises:
+        FileNotFoundError: If shap_metadata.json doesn't exist.
+    """
+    meta_path = artifacts_dir / "shap_metadata.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(
+            f"Pipeline metadata not found: {meta_path}. "
+            f"Expected shap_metadata.json in '{artifacts_dir}'. "
+            f"Has the Kedro explainability pipeline been run?"
+        )
+    with open(meta_path) as f:
+        return json.load(f)
+
+
+def _load_pipeline_shap_values(artifacts_dir: Path, metadata: dict) -> np.ndarray:
+    """Load the SHAP values array from pipeline artifacts.
+
+    Handles both single-output (one .npy file) and multi-output
+    (multiple class-specific .npy files) formats.
+
+    Args:
+        artifacts_dir: Directory containing pipeline output artifacts.
+        metadata: Parsed shap_metadata.json.
+
+    Returns:
+        numpy array of shape (n_samples, n_features).
+
+    Raises:
+        FileNotFoundError: If the SHAP values file doesn't exist.
+    """
+    shap_paths = metadata.get("shap_saved_paths", ["shap_values.npy"])
+    shap_filename = shap_paths[0]  # primary file
+    shap_path = artifacts_dir / shap_filename
+
+    if not shap_path.exists():
+        raise FileNotFoundError(
+            f"SHAP values file not found: {shap_path}. "
+            f"Expected '{shap_filename}' in '{artifacts_dir}'."
+        )
+    return np.load(shap_path)
+
+
+def load_shap_from_pipeline(
+    artifacts_dir: str | Path,
+    sample_index: int,
+) -> ShapResult:
+    """Read a single sample's SHAP explanation from pipeline artifacts.
+
+    This is the PRODUCTION bridge between the Kedro explainability pipeline
+    and our MCP toolkit. Instead of recomputing SHAP on the fly, we read
+    the pre-computed values that the pipeline already persisted to disk.
+
+    The Kedro pipeline (explainability_node) saves:
+      - shap_values.npy: SHAP values for all explained samples
+      - shap_expected_value.npy: baseline (expected) values
+      - shap_metadata.json: feature names, explainer type, etc.
+
+    This function extracts one sample's worth of data and returns it as
+    a ShapResult, compatible with our narrators and plot functions.
+
+    Note: prediction and probability are NOT available from SHAP artifacts
+    alone (they require the model). These fields are set to placeholder
+    values. If you need them, pass the model separately or use the
+    on-the-fly compute_shap_values() function instead.
+
+    Args:
+        artifacts_dir: Path to directory containing pipeline outputs.
+        sample_index: Which sample (row) to extract from the bulk results.
+
+    Returns:
+        ShapResult populated from the pipeline's pre-computed artifacts.
+
+    Raises:
+        FileNotFoundError: If required artifact files are missing.
+        IndexError: If sample_index is beyond the number of explained samples.
+
+    Example:
+        >>> result = load_shap_from_pipeline("shap_results/", sample_index=42)
+        >>> narrative = narrate_prediction(result, top_n=3)
+    """
+    artifacts_dir = Path(artifacts_dir)
+
+    # Load metadata and SHAP values
+    metadata = _load_pipeline_metadata(artifacts_dir)
+    shap_values = _load_pipeline_shap_values(artifacts_dir, metadata)
+    feature_names = metadata["feature_names"]
+
+    # Validate sample index
+    n_samples = shap_values.shape[0]
+    if sample_index < 0 or sample_index >= n_samples:
+        raise IndexError(
+            f"Sample index {sample_index} is out of range. "
+            f"Pipeline computed SHAP for {n_samples} samples "
+            f"(valid indices: 0\u2013{n_samples - 1})."
+        )
+
+    # Extract this sample's SHAP values
+    sample_shap = shap_values[sample_index]  # shape: (n_features,)
+    shap_dict = {
+        name: round(float(val), 6)
+        for name, val in zip(feature_names, sample_shap)
+    }
+
+    # Load base value (expected value)
+    ev_path = artifacts_dir / "shap_expected_value.npy"
+    if ev_path.exists():
+        expected_values = np.load(ev_path)
+        if expected_values.ndim == 0:
+            base_value = float(expected_values)
+        elif len(expected_values) > sample_index:
+            base_value = float(expected_values[sample_index])
+        else:
+            base_value = float(np.mean(expected_values))
+    else:
+        base_value = 0.0
+
+    # Feature values are not stored in standard pipeline artifacts.
+    # Use zeros as placeholder — callers who need actual values should
+    # join with the original test data.
+    feature_value_dict = {name: 0.0 for name in feature_names}
+
+    return ShapResult(
+        prediction=0,  # unknown from SHAP artifacts alone
+        prediction_label="unknown",
+        probability=0.0,
+        base_value=round(base_value, 6),
+        shap_values=shap_dict,
+        feature_values=feature_value_dict,
+        feature_names=feature_names,
+    )
+
+
+def load_global_importance_from_pipeline(
+    artifacts_dir: str | Path,
+) -> list[FeatureImportance]:
+    """Compute global feature importance from pipeline's pre-computed SHAP.
+
+    Reads the bulk SHAP values that the Kedro pipeline already computed
+    and derives mean absolute importance per feature — the same metric
+    our on-the-fly compute_global_feature_importance() produces.
+
+    This avoids recomputing SHAP across all samples, which is the most
+    expensive operation in the explainability workflow.
+
+    Args:
+        artifacts_dir: Path to directory containing pipeline outputs.
+
+    Returns:
+        List of FeatureImportance, sorted by importance (highest first).
+        Compatible with narrate_feature_comparison() and narrate_model_summary().
+
+    Raises:
+        FileNotFoundError: If required artifact files are missing.
+
+    Example:
+        >>> importances = load_global_importance_from_pipeline("shap_results/")
+        >>> narrative = narrate_feature_comparison(importances, top_n=10)
+    """
+    artifacts_dir = Path(artifacts_dir)
+
+    # Load metadata and SHAP values
+    metadata = _load_pipeline_metadata(artifacts_dir)
+    shap_values = _load_pipeline_shap_values(artifacts_dir, metadata)
+    feature_names = metadata["feature_names"]
+
+    # Same aggregation as compute_global_feature_importance:
+    # importance = mean(|SHAP|), direction = sign(mean(SHAP))
+    mean_abs = np.mean(np.abs(shap_values), axis=0)
+    mean_signed = np.mean(shap_values, axis=0)
+
+    importances = [
+        FeatureImportance(
+            name=name,
+            importance=round(float(mean_abs[i]), 6),
+            direction="positive" if mean_signed[i] > 0 else "negative",
+            mean_shap=round(float(mean_signed[i]), 6),
+        )
+        for i, name in enumerate(feature_names)
+    ]
+
+    # Sort by importance (highest first)
+    importances.sort(key=lambda f: f.importance, reverse=True)
+    return importances

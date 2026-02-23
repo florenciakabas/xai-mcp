@@ -75,8 +75,16 @@ Every successful tool call returns:
     "evidence":    dict,  # Structured numeric data backing the narrative
     "metadata":    dict,  # model_id, model_type, timestamp, tool_version, data_hash
     "plot_base64": str,   # Optional base64 PNG (None if not applicable)
+    "grounded":    bool,  # Always True — epistemic label (see below)
 }
 ```
+
+`grounded: True` signals that this answer was computed deterministically from a
+registered model. It is present on every tool response by definition — if a tool
+was called, computation happened. The LLM is instructed: if it answers a question
+without calling a tool, it must prepend a ⚠️ disclaimer, because `grounded: True`
+will be absent from its response. This gives users a visible, consistent signal
+about whether they are reading a verified result or general knowledge.
 
 Every failed tool call returns:
 ```python

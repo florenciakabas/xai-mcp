@@ -3,12 +3,19 @@
 All tools return a consistent `ToolResponse` structure (see ADR-005):
 ```json
 {
-  "narrative": "Plain English interpretation...",
-  "evidence": { ... structured data ... },
-  "metadata": { "model_id": ..., "timestamp": ..., "tool_version": ... },
-  "plot_base64": null
+  "narrative":   "Plain English interpretation...",
+  "evidence":    { ... structured data ... },
+  "metadata":    { "model_id": ..., "timestamp": ..., "tool_version": ..., "data_hash": ... },
+  "plot_base64": null,
+  "grounded":    true
 }
 ```
+
+`grounded: true` is present on every tool response. It signals to the LLM that
+this answer was computed deterministically from a registered model and is
+audit-ready. If the LLM answers a question without calling a tool (general
+knowledge), it is instructed to prepend a ⚠️ disclaimer — because no
+`grounded: true` field will be present in that case.
 
 ---
 

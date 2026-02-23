@@ -10,20 +10,27 @@ results consistently. Without a standard structure, each tool becomes a
 special case requiring unique handling logic.
 
 ## Decision
-Every MCP tool returns a `ToolResponse` with four fields:
+Every MCP tool returns a `ToolResponse` with five fields:
 
 ```python
 {
-    "narrative": str,      # Plain English interpretation (REQUIRED)
-    "evidence": dict,      # Structured numeric data backing the narrative
-    "metadata": dict,      # Audit trail: model_id, timestamp, tool_version
-    "plot_base64": str,    # Optional base64-encoded PNG visualization
+    "narrative":   str,   # Plain English interpretation (REQUIRED)
+    "evidence":    dict,  # Structured numeric data backing the narrative
+    "metadata":    dict,  # Audit trail: model_id, timestamp, tool_version, data_hash
+    "plot_base64": str,   # Optional base64-encoded PNG visualization
+    "grounded":    bool,  # Always True for tool responses (epistemic label)
 }
 ```
 
 The `narrative` is the primary output — what the LLM presents to the user.
 The `evidence` is structured data for programmatic consumption or follow-up.
 The `metadata` enables auditability and reproducibility.
+The `grounded` flag is an epistemic label for the consuming LLM: `True` signals
+that this answer was computed deterministically from a registered model and is
+audit-ready. The LLM is instructed to prepend a disclaimer on any response it
+generates *without* calling a tool — i.e. when `grounded=True` is absent from
+the response entirely. This gives users a visible, consistent signal about
+whether they are reading a verified computation or general knowledge.
 
 ## Consequences
 

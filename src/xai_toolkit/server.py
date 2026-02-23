@@ -50,7 +50,14 @@ mcp = FastMCP(
         "values yourself. Embed the 'narrative' field naturally in your response; "
         "it is the authoritative explanation and must not be supplemented or "
         "reinterpreted. When a response includes 'plot_base64', render it as "
-        "an inline image."
+        "an inline image. "
+        "IMPORTANT — epistemic labeling: every tool response includes "
+        "'grounded': true, meaning the answer was computed deterministically "
+        "from a registered model and is audit-ready. If you answer a question "
+        "WITHOUT calling any tool, you MUST begin your response with exactly: "
+        "'\u26a0\ufe0f This answer is based on my general knowledge, not computed "
+        "from your registered models. It has not been verified against your data "
+        "and should not be used for audit or governance purposes.'"
     ),
 )
 
