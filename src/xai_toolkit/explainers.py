@@ -5,6 +5,8 @@ All functions return structured data (Pydantic models or dicts),
 never English text. Narrative generation is handled by narrators.py.
 """
 
+import hashlib
+
 import numpy as np
 import pandas as pd
 import shap
@@ -264,6 +266,36 @@ def compute_partial_dependence(
         prediction_min=round(float(avg_predictions.min()), 6),
         prediction_max=round(float(avg_predictions.max()), 6),
     )
+
+
+def compute_data_hash(X: pd.DataFrame, sample_index: int | None = None) -> str:
+    """Compute a SHA256 hash of a DataFrame for audit purposes (D3-S2).
+
+    The hash captures the exact data values used to generate an explanation,
+    creating an auditable link between output and input. Same data → same hash,
+    always. Useful for confirming that two explanations were generated from
+    identical inputs.
+
+    Args:
+        X: The feature matrix.
+        sample_index: If provided, hash only that single row.
+                      If None, hash the entire matrix.
+
+    Returns:
+        SHA256 hex digest (64 hex characters).
+
+    Example:
+        >>> h = compute_data_hash(X_test, sample_index=42)
+        >>> len(h)
+        64
+        >>> h == compute_data_hash(X_test, sample_index=42)  # always True
+        True
+    """
+    data = X.iloc[[sample_index]] if sample_index is not None else X
+    # to_csv gives deterministic text serialization regardless of DataFrame
+    # internal memory layout. index=False ensures row numbers don't affect hash.
+    csv_bytes = data.to_csv(index=False).encode("utf-8")
+    return hashlib.sha256(csv_bytes).hexdigest()
 
 
 def compute_dataset_description(

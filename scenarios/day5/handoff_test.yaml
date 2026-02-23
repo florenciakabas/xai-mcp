@@ -1,0 +1,19 @@
+# D5-S4: The handoff test — a colleague with no context can get started
+# If this passes, the project has escaped the "only the author understands it" trap.
+
+scenario: "A new colleague can understand and run the project without help"
+day: 5
+id: D5-S4
+
+given:
+  - repository cloned
+  - colleague has no prior context about the project
+
+when: colleague reads README.md, then ADRs, then scalability-path.md
+
+then:
+  - understands_what_it_does: true           # from README
+  - understands_why_decisions_were_made: true # from ADRs
+  - understands_production_path: true         # from scalability-path.md
+  - can_run_tests_in_under_5_minutes: true
+  - knows_how_to_add_a_new_model: true        # from AGENTS.md

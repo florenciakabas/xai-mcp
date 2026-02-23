@@ -1,0 +1,21 @@
+# D3-S4: Sample index out of range returns a structured, helpful error
+# The message tells the user both what went wrong and the valid range.
+
+scenario: "Out-of-range sample index returns a structured, actionable error"
+day: 3
+id: D3-S4
+
+given:
+  model: "xgboost_breast_cancer"
+  sample_index: 99999
+
+when: tool "explain_prediction" is called
+
+then:
+  - response_has_field: "error_code"
+  - response_has_field: "message"
+  - response_has_field: "available"
+  - error_code_equals: "SAMPLE_OUT_OF_RANGE"
+  - message_contains: "out of range"
+  - message_contains: actual_dataset_size   # tells user how many samples exist
+  - available_shows_valid_range: true       # e.g. ["0–113"]

@@ -1,0 +1,22 @@
+# D3-S6: Snapshot tests guard against narrative drift
+# Any unintended change to narrator output causes a test failure.
+# To intentionally change a narrative, you must update the snapshot explicitly.
+
+scenario: "Narrator outputs are locked to known-good golden values"
+day: 3
+id: D3-S6
+
+given:
+  - saved snapshot files in tests/__snapshots__/
+  - known-good inputs from test fixtures
+
+when: pytest tests/test_snapshots.py is executed
+
+then:
+  - narrate_prediction_matches_snapshot: true
+  - narrate_model_summary_matches_snapshot: true
+  - narrate_feature_comparison_matches_snapshot: true
+  - narrate_partial_dependence_matches_snapshot: true
+  - narrate_dataset_matches_snapshot: true
+  - any_narrative_change_causes_failure: true
+  - updating_snapshot_requires_explicit_flag: true   # --snapshot-update

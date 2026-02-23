@@ -86,7 +86,17 @@ class DatasetDescription(BaseModel):
 
 
 class ToolMetadata(BaseModel):
-    """Audit metadata attached to every tool response."""
+    """Audit metadata attached to every tool response.
+
+    Every field here answers a question an auditor might ask:
+      - model_id      → which model made this prediction?
+      - model_type    → what kind of model is it?
+      - timestamp     → when was this explanation generated?
+      - tool_version  → which version of the toolkit produced this?
+      - sample_index  → which sample was explained?
+      - dataset_size  → how large was the dataset?
+      - data_hash     → was this the exact same data as before?
+    """
 
     model_id: str
     model_type: str
@@ -96,6 +106,14 @@ class ToolMetadata(BaseModel):
     tool_version: str = "0.1.0"
     sample_index: int | None = None
     dataset_size: int | None = None
+    data_hash: str | None = Field(
+        default=None,
+        description=(
+            "SHA256 hex digest of the input data used to generate this explanation. "
+            "Enables audit trail: same hash guarantees same underlying data. "
+            "64 hex characters."
+        ),
+    )
 
 
 class ExplainPredictionResponse(BaseModel):
@@ -121,4 +139,38 @@ class ToolResponse(BaseModel):
     metadata: ToolMetadata
     plot_base64: str | None = Field(
         default=None, description="Optional base64-encoded PNG"
+    )
+
+
+class ErrorResponse(BaseModel):
+    """Structured error returned when a tool call fails (D3-S3, S4, S5).
+
+    Follows the same structural pattern as ToolResponse so the LLM
+    always receives a predictable shape regardless of success or failure.
+    The 'available' field tells the user what valid options exist,
+    and 'suggestion' provides a closest-match hint for typos.
+
+    Error codes are SCREAMING_SNAKE_CASE for machine-readability.
+    Messages are plain English for human-readability.
+    """
+
+    error_code: str = Field(
+        description=(
+            "Machine-readable error type. One of: "
+            "MODEL_NOT_FOUND | SAMPLE_OUT_OF_RANGE | FEATURE_NOT_FOUND | UNKNOWN_ERROR"
+        )
+    )
+    message: str = Field(description="Human-readable explanation of what went wrong")
+    available: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Valid options the user can try instead. "
+            "For MODEL_NOT_FOUND: list of registered model IDs. "
+            "For SAMPLE_OUT_OF_RANGE: valid index range as a string. "
+            "For FEATURE_NOT_FOUND: list of all feature names."
+        ),
+    )
+    suggestion: str | None = Field(
+        default=None,
+        description="Closest-match suggestion (populated for typo-style errors like FEATURE_NOT_FOUND)",
     )

@@ -1,0 +1,21 @@
+# D5-S1: Zero-setup experience for a new machine
+# Anyone who clones the repo and runs uv sync should be working in minutes.
+
+scenario: "Fresh clone is demo-ready in under 5 minutes"
+day: 5
+id: D5-S1
+
+given: fresh clone of the repository, uv installed
+
+when:
+  - uv sync
+  - uv run python scripts/train_toy_model.py
+  - uv run python scripts/train_rf_model.py
+  - uv run python -m pytest tests/ -v
+
+then:
+  - all_dependencies_install: true
+  - all_tests_pass: true
+  - VS_Code_MCP_server_starts: true
+  - first_query_returns_result: true
+  - total_time_under_5_minutes: true

@@ -1,0 +1,16 @@
+# serializer version: 1
+# name: test_narrate_dataset_snapshot
+  'The dataset contains 114 samples with 30 features. Class distribution: malignant: 43 (37.7%), benign: 71 (62.3%). There are no missing values in the dataset.'
+# ---
+# name: test_narrate_feature_comparison_snapshot
+  'Ranked by importance (mean absolute SHAP value across all samples), the top 5 features are: #1 worst_radius (importance: 0.1500, tends to increase risk); #2 worst_concave_points (importance: 0.1000, tends to increase risk); #3 mean_concavity (importance: 0.0700, tends to increase risk); #4 mean_smoothness (importance: 0.0400, tends to decrease risk); #5 mean_texture (importance: 0.0200, tends to increase risk).'
+# ---
+# name: test_narrate_model_summary_snapshot
+  'This is a XGBClassifier model trained to distinguish between malignant and benign cases. It uses 30 features and achieves 95.6% accuracy on the test set (114 samples). The most influential features are: worst_radius (most important, average impact 0.1500, generally pushes positive), worst_concave_points (second most important, average impact 0.1000, generally pushes positive), and mean_concavity (third most important, average impact 0.0700, generally pushes positive).'
+# ---
+# name: test_narrate_partial_dependence_snapshot
+  'As mean radius increases from 6.98 to 28.11, the predicted probability increases from 12.0% to 89.0%. The total effect range is 77.0% (from 12.0% to 89.0%). The steepest change occurs between mean radius = 10.00 and 15.00.'
+# ---
+# name: test_narrate_prediction_snapshot
+  'The model classified this sample as malignant (probability: 0.91) primarily because of 3 factors: worst_radius = 23.4000 (pushing toward the positive class by +0.2800), worst_concave_points = 0.1800 (pushing toward the positive class by +0.1900), and mean_concavity = 0.1500 (pushing toward the positive class by +0.1400). The top opposing factor is mean_smoothness = 0.0800 (pushing away from the positive class by -0.0600).'
+# ---

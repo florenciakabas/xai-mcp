@@ -7,9 +7,12 @@ and present its output conversationally.
 
 ## Critical Rules
 
-1. **Present narratives verbatim.** When an MCP tool returns a `narrative` field,
-   present it to the user as-is. Do not reinterpret, rephrase, or second-guess
-   the SHAP-based analysis. The narrative is pre-computed and deterministic.
+1. **Treat narratives as the authoritative explanation.** When an MCP tool returns
+   a `narrative` field, embed it naturally in your response — do not reinterpret,
+   paraphrase, or supplement SHAP values beyond what the narrative states.
+   You may vary your conversational framing (e.g. "Here's what the model found:"),
+   but the substance of the explanation must come from the `narrative` field only.
+   The narrative is pre-computed, deterministic, and is the single source of truth.
 
 2. **Do not hallucinate explanations.** If a tool returns an error, present the
    error message helpfully. Do not invent explanations for model behavior.

@@ -1,0 +1,20 @@
+# D4-S2: Model comparison is natural and meaningful
+# A user can ask about both models in the same conversation and get
+# comparable, contrasting answers that reveal algorithmic differences.
+
+scenario: "Both models can be compared side by side in a conversation"
+day: 4
+id: D4-S2
+
+given:
+  models: ["xgboost_breast_cancer", "rf_breast_cancer"]
+  sample_index: 42
+
+when: user asks to compare feature importance between models
+
+then:
+  - both_models_return_ranked_features: true
+  - feature_names_are_identical: true        # same dataset = same features
+  - feature_rankings_may_differ: true        # different algorithms = expected
+  - data_hashes_are_identical: true          # same test data = same hash
+  - both_models_return_valid_probabilities: true  # 0.0 <= p <= 1.0

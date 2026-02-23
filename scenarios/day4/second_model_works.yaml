@@ -1,0 +1,20 @@
+# D4-S1: All 7 tools work with both model types — zero code changes
+# This is the proof-of-architecture scenario. If this passes,
+# the abstraction is real: the toolkit is genuinely model-agnostic.
+
+scenario: "All tools work identically for XGBoost and RandomForest"
+day: 4
+id: D4-S1
+
+given:
+  models: ["xgboost_breast_cancer", "rf_breast_cancer"]
+
+when: ALL 7 tools are called against BOTH models
+
+then:
+  - all_tools_succeed_for_xgboost: true
+  - all_tools_succeed_for_rf: true
+  - no_model_specific_code_paths: true
+  - both_return_narrative_field: true
+  - both_return_data_hash: true
+  - no_error_codes_present: true

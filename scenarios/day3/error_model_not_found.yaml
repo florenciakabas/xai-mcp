@@ -1,0 +1,21 @@
+# D3-S3: Model not found returns a structured, helpful error
+# The LLM always receives a consistent response shape, even on failure.
+# The error tells the user what went wrong AND what they can do instead.
+
+scenario: "Unknown model ID returns a structured, actionable error"
+day: 3
+id: D3-S3
+
+given:
+  model_id: "nonexistent_model"
+
+when: tool "explain_prediction" is called
+
+then:
+  - response_has_field: "error_code"
+  - response_has_field: "message"
+  - response_has_field: "available"
+  - error_code_equals: "MODEL_NOT_FOUND"
+  - message_contains: "not registered"
+  - available_lists_registered_models: true   # user knows what to use instead
+  - available_is_not_empty: true

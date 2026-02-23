@@ -32,3 +32,8 @@ packages = ["src/xai_toolkit"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[dependency-groups]
+dev = [
+    "syrupy>=5.1.0",
+]

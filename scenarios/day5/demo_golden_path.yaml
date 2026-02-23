@@ -1,0 +1,20 @@
+# D5-S2: Demo golden path — all queries work in sequence
+# These are the exact questions used in the 15-minute demo walkthrough.
+
+scenario: "Demo golden path: all 7+ queries work end-to-end in VS Code"
+day: 5
+id: D5-S2
+
+given: VS Code open, MCP server running, both models loaded
+
+when: user asks each demo question in sequence
+
+then:
+  - "What models are available?" → lists_both_models: true
+  - "Summarize the XGBoost model" → returns_English_summary: true
+  - "Why was patient 42 classified as malignant?" → returns_narrative_and_bar_chart: true
+  - "Show me the waterfall for sample 42" → returns_waterfall_plot: true
+  - "How does mean radius affect predictions?" → returns_PDP_narrative_and_ICE_plot: true
+  - "Compare feature importance between the two models" → returns_comparison: true
+  - "Explain sample 99999" → returns_graceful_error_with_guidance: true
+  - same_query_twice → identical_narrative_output: true

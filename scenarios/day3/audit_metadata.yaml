@@ -1,0 +1,18 @@
+# D3-S2: Audit metadata on every response
+# Every tool response carries a complete audit trail.
+# This is what allows an engineer to reproduce an explanation months later.
+
+scenario: "Every tool response carries complete audit metadata"
+day: 3
+id: D3-S2
+
+given: any valid tool call with a known model and dataset
+
+then:
+  - metadata_has: "model_id"
+  - metadata_has: "model_type"
+  - metadata_has: "timestamp"               # ISO 8601 UTC
+  - metadata_has: "tool_version"            # semver string
+  - metadata_has: "data_hash"              # SHA256 hex of input data
+  - data_hash_is_64_chars: true            # SHA256 hex = 64 characters
+  - timestamp_is_iso_format: true

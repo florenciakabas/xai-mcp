@@ -1,0 +1,18 @@
+# D5-S3: Documentation is complete and consistent
+# The repo is self-explanatory to a new colleague with no prior context.
+
+scenario: "All documentation is complete, accurate, and consistent"
+day: 5
+id: D5-S3
+
+given: repository root
+
+then:
+  - README_has_install_section: true
+  - README_has_usage_section: true
+  - README_has_architecture_section: true
+  - AGENTS_md_reflects_current_structure: true
+  - ADRs_count_at_least_5: true
+  - specs_tools_spec_matches_7_tools: true
+  - scalability_path_md_is_complete: true
+  - all_scenario_files_present: true       # day1 through day5

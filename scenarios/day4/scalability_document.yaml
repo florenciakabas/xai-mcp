@@ -1,0 +1,21 @@
+# D4-S3: Scalability document is complete and comprehensible
+# The document must make sense to a non-technical decision-maker.
+# It answers: what did we build, what changes for production, and
+# what does the integration with existing work look like?
+
+scenario: "Scalability roadmap is complete, clear, and actionable"
+day: 4
+id: D4-S3
+
+given: docs/scalability-path.md
+
+then:
+  - has_section: "What We Built"
+  - has_section: "What Changes for Production"
+  - has_section: "What Stays the Same"
+  - has_section: "Databricks Integration Path"
+  - has_section: "Multi-Agent Architecture"
+  - each_change_has_effort_estimate: true
+  - references_existing_kedro_pipeline: true
+  - non_technical_reader_can_understand: true
+  - production_path_is_concrete: true    # not vague, has actual technology names

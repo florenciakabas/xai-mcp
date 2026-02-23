@@ -1,0 +1,20 @@
+# D3-S1: Reproducible output — the core quality guarantee
+# Same model + same data = same narrative, same evidence, same hash.
+# Only the timestamp is allowed to differ between calls.
+
+scenario: "Identical inputs always produce identical outputs"
+day: 3
+id: D3-S1
+
+given:
+  model: "xgboost_breast_cancer"
+  sample_index: 42
+
+when: tool "explain_prediction" is called 5 times with identical inputs
+
+then:
+  - all_5_narratives_are_identical: true
+  - all_5_evidence_blocks_are_identical: true
+  - all_5_data_hashes_are_identical: true
+  - metadata_timestamps_differ: true        # only field allowed to vary
+  - all_5_probabilities_are_identical: true

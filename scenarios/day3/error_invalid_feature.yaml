@@ -1,0 +1,21 @@
+# D3-S5: Invalid feature name returns a structured error with a suggestion
+# Uses fuzzy matching (difflib) to guide the user toward the correct name.
+
+scenario: "Typo in feature name returns an error with a closest-match suggestion"
+day: 3
+id: D3-S5
+
+given:
+  model: "xgboost_breast_cancer"
+  feature: "mean_radus"     # deliberate typo: missing 'i'
+
+when: tool "get_partial_dependence" is called
+
+then:
+  - response_has_field: "error_code"
+  - response_has_field: "message"
+  - response_has_field: "available"
+  - response_has_field: "suggestion"
+  - error_code_equals: "FEATURE_NOT_FOUND"
+  - suggestion_contains: "mean radius"      # closest valid feature name
+  - available_lists_all_feature_names: true
