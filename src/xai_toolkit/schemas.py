@@ -157,17 +157,6 @@ class ToolMetadata(BaseModel):
     )
 
 
-class ExplainPredictionResponse(BaseModel):
-    """Full response from the explain_prediction tool."""
-
-    narrative: str = Field(description="Plain English explanation")
-    evidence: dict = Field(description="Structured SHAP data backing the narrative")
-    metadata: ToolMetadata
-    plot_base64: str | None = Field(
-        default=None, description="Optional base64-encoded PNG"
-    )
-
-
 class ToolResponse(BaseModel):
     """Generic response for all tools (ADR-005).
 

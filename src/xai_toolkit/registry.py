@@ -6,7 +6,7 @@ the how/where of loading.
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import joblib

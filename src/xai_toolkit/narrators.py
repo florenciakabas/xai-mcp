@@ -154,7 +154,7 @@ def narrate_model_summary(summary: ModelSummary) -> str:
     # Top features
     if summary.top_features:
         narrative += (
-            f" The most influential features are: "
+            " The most influential features are: "
         )
         feature_parts = []
         for i, feat in enumerate(summary.top_features):

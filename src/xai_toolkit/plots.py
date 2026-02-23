@@ -14,11 +14,9 @@ Three plot types:
 
 import base64
 import io
-from typing import Literal
 
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
 
 from xai_toolkit.schemas import PartialDependenceResult, ShapResult
 
@@ -272,7 +270,7 @@ def plot_shap_waterfall(
     ax.set_facecolor(COLORS["background"])
 
     # Draw bars
-    bars = ax.barh(
+    ax.barh(
         range(len(names)),
         [abs(v) for v in values],
         left=lefts,

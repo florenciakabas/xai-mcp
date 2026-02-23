@@ -35,5 +35,6 @@ pythonpath = ["src"]
 
 [dependency-groups]
 dev = [
+    "ruff>=0.15.2",
     "syrupy>=5.1.0",
 ]

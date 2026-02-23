@@ -14,7 +14,6 @@ review the diff, and commit the updated .ambr file alongside the code change.
 This creates an explicit, reviewable audit trail of narrative changes.
 """
 
-import pytest
 from syrupy.assertion import SnapshotAssertion
 
 from xai_toolkit.narrators import (
