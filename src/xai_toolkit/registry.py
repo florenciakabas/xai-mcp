@@ -3,6 +3,10 @@
 Design pattern: Registry — a central lookup that decouples model loading
 from model usage. Consumers ask for a model by ID; the registry handles
 the how/where of loading.
+
+At load time, each model is introspected using detect_model_type()
+(adapted from the Kedro explainability pipeline) to produce a
+pipeline-compatible type string stored as 'detected_type' in metadata.
 """
 
 import json
@@ -11,6 +15,8 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+
+from xai_toolkit.pipeline_compat import detect_model_type
 
 
 @dataclass
@@ -74,6 +80,12 @@ class ModelRegistry:
         X_test = pd.read_csv(data_dir / f"{dataset_name}_test_X.csv")
         y_test = pd.read_csv(data_dir / f"{dataset_name}_test_y.csv").squeeze()
 
+        # Detect model type using pipeline-compatible logic (Tamas's
+        # _detect_model_type from the Kedro explainability pipeline).
+        # This ensures our metadata matches what the pipeline would produce.
+        detected_type = detect_model_type(model)
+        metadata["detected_type"] = detected_type
+
         self._models[model_id] = RegisteredModel(
             model_id=model_id,
             model=model,
@@ -103,6 +115,7 @@ class ModelRegistry:
             {
                 "model_id": entry.model_id,
                 "model_type": entry.metadata.get("model_type", "unknown"),
+                "detected_type": entry.metadata.get("detected_type", "unknown"),
                 "dataset_name": entry.metadata.get("dataset_name", "unknown"),
                 "feature_count": len(entry.metadata.get("feature_names", [])),
                 "accuracy": entry.metadata.get("accuracy"),

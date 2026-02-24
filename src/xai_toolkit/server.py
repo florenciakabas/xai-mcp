@@ -199,6 +199,7 @@ def explain_prediction(
         evidence=shap_result.model_dump(),
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
+        detected_type=entry.metadata.get("detected_type"),
         sample_index=sample_index,
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
@@ -256,6 +257,7 @@ def explain_prediction_waterfall(
         evidence=shap_result.model_dump(),
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
+        detected_type=entry.metadata.get("detected_type"),
         sample_index=sample_index,
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
@@ -300,6 +302,7 @@ def summarize_model(model_id: str) -> dict:
         evidence=summary.model_dump(),
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
+        detected_type=entry.metadata.get("detected_type"),
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
     )
@@ -347,6 +350,7 @@ def compare_features(model_id: str, top_n: int = 10) -> dict:
         evidence=evidence,
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
+        detected_type=entry.metadata.get("detected_type"),
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
     )
@@ -416,6 +420,7 @@ def get_partial_dependence(
         evidence=evidence,
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
+        detected_type=entry.metadata.get("detected_type"),
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
         plot_base64=plot_b64,
@@ -497,6 +502,7 @@ def describe_dataset(model_id: str) -> dict:
         evidence=description.model_dump(),
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
+        detected_type=entry.metadata.get("detected_type"),
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
     )
