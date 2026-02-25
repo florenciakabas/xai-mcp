@@ -1,0 +1,41 @@
+# scenarios/cli/cli_adapter.yaml
+# Phase: Multi-interface support
+# Prerequisite: models trained, knowledge base populated
+#
+# This scenario validates that the CLI adapter produces identical
+# output shapes to the MCP server, confirming ADR-001's separation
+# of concerns: same pure functions, different adapter.
+
+scenario: "CLI produces identical output to MCP server"
+phase: multi-interface
+
+given:
+  model: "xgboost_breast_cancer"
+  sample_index: 0
+  knowledge_dir: "knowledge/"
+
+when:
+  interface: "cli"
+
+then:
+  # All model commands produce ToolResponse shape
+  - cli_command: "models"
+  - output_has_field: "narrative"
+  - output_has_field: "evidence"
+  - output_has_field: "metadata"
+  - output_has_field: "grounded"
+
+  # Context command produces KnowledgeSearchResult shape
+  - cli_command: "context --query 'biopsy referral'"
+  - output_has_field: "chunks"
+  - output_has_field: "provenance_label"
+  - provenance_label_value: "ai-interpreted"
+
+  # Error cases produce ErrorResponse shape
+  - cli_command: "explain --model nonexistent --sample 0"
+  - output_has_field: "error_code"
+  - error_code_value: "MODEL_NOT_FOUND"
+  - output_has_field: "available"
+
+  # Output is valid JSON (composable with jq, scripts, etc.)
+  - all_outputs_valid_json: true

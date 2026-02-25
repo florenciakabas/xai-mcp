@@ -24,6 +24,11 @@ uv run python scripts/train_rf_model.py       # RandomForest
 
 # Start the MCP server locally
 uv run python -m xai_toolkit.server
+
+# CLI interface (same functions, no MCP dependency)
+uv run python -m xai_toolkit.cli models
+uv run python -m xai_toolkit.cli explain --model xgboost_breast_cancer --sample 0
+uv run python -m xai_toolkit.cli context --query "high risk biopsy"
 ```
 
 ## The Golden Rule
@@ -59,6 +64,9 @@ User question → server.py → explainers.py → narrators.py → response
 - **`knowledge.py`** — Business context retrieval (ADR-009). Loads markdown
   documents from `knowledge/`, chunks by heading, searches via TF-IDF.
   Pure Python, no MCP imports. Supports "Glass Floor" provenance pattern.
+- **`cli.py`** — CLI adapter. Same pure functions as `server.py`, outputs
+  JSON to stdout. Zero MCP dependency. For scripting, CI/CD, and
+  environments where MCP servers are unavailable.
 
 ## MCP Tools (8 total)
 
