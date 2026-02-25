@@ -24,9 +24,34 @@ and present its output conversationally.
    - "How does [feature] affect predictions?" → `get_partial_dependence`
    - "What models are available?" → `list_models`
    - "Tell me about the data" → `describe_dataset`
+   - "What should I do about this?" → `retrieve_business_context`
+   - Any question about protocols, thresholds, procedures → `retrieve_business_context`
 
-4. **Never compute SHAP values yourself.** All explainability computation is
+4. **For multi-step analysis, follow the methodology guide.** When a user asks
+   for a thorough explanation or when a single tool call would be incomplete,
+   follow the workflow in `docs/xai-methodology.md`. It defines a four-step
+   sequence (orient → global → feature effects → local) that builds context
+   progressively. Abbreviation guidance is included for narrower questions.
+
+5. **Never compute SHAP values yourself.** All explainability computation is
    done server-side. You are the presenter, not the analyst.
+
+6. **Glass Floor Protocol (ADR-009).** When you present business context from
+   `retrieve_business_context` alongside a deterministic explanation:
+
+   **LAYER 1 (always first):** Present the deterministic tool narrative exactly
+   as returned. This is computed, reproducible, and audit-ready. Label it clearly,
+   e.g. "📊 Model Explanation (deterministic, grounded):".
+
+   **LAYER 2 (always second, always separate):** Present business context
+   retrieved from the knowledge base. Always prefix with:
+   "📋 Business Context (AI-interpreted from [source_document], [section]):".
+   Cite the source document and section heading for every piece of context.
+   Make clear this layer is AI-synthesized and should be verified before acting.
+
+   **NEVER** blend Layer 1 and Layer 2 content into a single paragraph.
+   **NEVER** modify the deterministic narrative based on business context.
+   The two layers must be visually and semantically distinct.
 
 ## Coding Standards (when editing code)
 - Python 3.11+, type hints on all signatures

@@ -1,0 +1,40 @@
+# scenarios/rag/glass_floor_output.yaml
+# Phase: RAG augmentation
+# Prerequisite: model registered, knowledge base loaded
+#
+# This scenario validates the "Glass Floor" principle: deterministic
+# explanations are presented first and intact, business context
+# interpretation is additive and clearly labeled with provenance.
+
+scenario: "Explanation with business context shows clear provenance"
+phase: rag-augmentation
+
+given:
+  model: "xgboost_breast_cancer"
+  sample_index: 42
+  knowledge_dir: "knowledge/"
+
+when:
+  user_asks: "Why was sample 42 classified as malignant and what should I do?"
+
+then:
+  # Layer 1 — deterministic (unchanged from existing behavior)
+  - tool_called: "explain_prediction"
+  - response_has_field: "narrative"
+  - narrative_is_deterministic: true
+
+  # Layer 2 — business context (new capability)
+  - tool_called: "retrieve_business_context"
+  - context_chunks_retrieved: true
+
+  # Combined output structure
+  - response_has_field: "business_context"
+  - business_context_has_field: "chunks"
+  - business_context_has_field: "provenance_label"
+  - provenance_label_value: "ai-interpreted"
+
+  # Manual verification (VS Code Copilot)
+  - manual_check: "Deterministic explanation is presented first"
+  - manual_check: "Business context is clearly marked as AI-interpreted"
+  - manual_check: "Source document and section are cited"
+  - manual_check: "The two layers are visually distinguishable"

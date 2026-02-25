@@ -1,0 +1,32 @@
+# scenarios/rag/graceful_degradation.yaml
+# Phase: RAG augmentation
+# Prerequisite: model registered, NO knowledge base present
+#
+# This scenario ensures the generic toolkit remains fully functional
+# without any knowledge base. The RAG layer is purely additive and
+# never breaks existing behavior.
+
+scenario: "System works normally when no knowledge base exists"
+phase: rag-augmentation
+
+given:
+  model: "xgboost_breast_cancer"
+  sample_index: 42
+  knowledge_dir_exists: false
+
+when:
+  user_asks: "Why was sample 42 classified as malignant?"
+
+then:
+  # Existing tools work exactly as before
+  - tool_called: "explain_prediction"
+  - response_has_field: "narrative"
+  - response_has_field: "evidence"
+  - response_has_field: "metadata"
+  - response_is_identical_to_baseline: true
+
+  # RAG tool is not invoked
+  - tool_not_called: "retrieve_business_context"
+
+  # No errors or warnings about missing knowledge base
+  - no_error_in_response: true

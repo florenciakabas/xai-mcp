@@ -35,9 +35,16 @@ from xai_toolkit.narrators import (
     narrate_partial_dependence,
     narrate_prediction,
 )
+from xai_toolkit.knowledge import load_knowledge_base, search_chunks
 from xai_toolkit.plots import plot_pdp_ice, plot_shap_bar, plot_shap_waterfall
 from xai_toolkit.registry import ModelRegistry
-from xai_toolkit.schemas import ErrorResponse, ToolMetadata, ToolResponse
+from xai_toolkit.schemas import (
+    ErrorResponse,
+    KnowledgeChunk,
+    KnowledgeSearchResult,
+    ToolMetadata,
+    ToolResponse,
+)
 
 # --- Server setup ---
 
@@ -57,7 +64,20 @@ mcp = FastMCP(
         "WITHOUT calling any tool, you MUST begin your response with exactly: "
         "'\u26a0\ufe0f This answer is based on my general knowledge, not computed "
         "from your registered models. It has not been verified against your data "
-        "and should not be used for audit or governance purposes.'"
+        "and should not be used for audit or governance purposes.' "
+        "GLASS FLOOR PROTOCOL (ADR-009): When a user asks 'what should I do' "
+        "or asks for recommendations after an explanation, call "
+        "retrieve_business_context with a query derived from the explanation "
+        "context (e.g., feature names, risk level, probability). Then present "
+        "the response in TWO clearly separated layers: "
+        "LAYER 1 (Deterministic): Present the tool narrative FIRST, exactly as "
+        "returned. This is computed, reproducible, and audit-ready. "
+        "LAYER 2 (Business Context): Present retrieved business context AFTER "
+        "the deterministic layer. Always prefix with: "
+        "'📋 Business Context (AI-interpreted from [source_document], "
+        "section: [section_heading]):' and include the provenance_label value. "
+        "NEVER mix Layer 1 and Layer 2 content. The deterministic explanation "
+        "must stand alone and unmodified. Business context is ADDITIVE only."
     ),
 )
 
@@ -74,6 +94,11 @@ for _model_id in ("xgboost_breast_cancer", "rf_breast_cancer"):
         registry.load_from_disk(_model_id, MODELS_DIR, DATA_DIR)
     except FileNotFoundError as e:
         print(f"Warning: Could not load {_model_id} at startup: {e}")
+
+# --- Knowledge base initialization (ADR-009) ---
+
+KNOWLEDGE_DIR = ROOT / "knowledge"
+_knowledge_base = load_knowledge_base(KNOWLEDGE_DIR)
 
 
 # --- Response builders ---
@@ -506,6 +531,63 @@ def describe_dataset(model_id: str) -> dict:
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
     )
+
+
+# --- Knowledge / RAG tool (ADR-009) ---
+
+
+@mcp.tool()
+def retrieve_business_context(
+    query: str,
+    top_k: int = 5,
+) -> dict:
+    """Retrieve relevant business context from the knowledge base.
+
+    Searches loaded business documents (e.g., clinical protocols, operational
+    rules) for sections relevant to the query. Returns ranked chunks with
+    source provenance for the Glass Floor presentation pattern.
+
+    Use this AFTER an explainability tool to find actionable business guidance.
+    For example, after explain_prediction returns a high-probability malignant
+    classification, call this with a query like 'high risk malignant biopsy'
+    to retrieve the relevant clinical protocol sections.
+
+    The provenance_label is always 'ai-interpreted' — any synthesis from
+    these chunks by the LLM is NOT deterministic and must be clearly
+    distinguished from grounded tool outputs.
+
+    Args:
+        query: Natural language search query (e.g., 'high risk biopsy referral').
+        top_k: Maximum number of chunks to return (default: 5).
+    """
+    if not _knowledge_base.chunks:
+        return KnowledgeSearchResult(
+            chunks=[],
+            query=query,
+            documents_searched=[],
+            retrieval_method="tfidf",
+        ).model_dump()
+
+    results = search_chunks(_knowledge_base, query, top_k=top_k)
+
+    chunks = [
+        KnowledgeChunk(
+            text=chunk.text,
+            source_document=chunk.source_document,
+            document_id=chunk.document_id,
+            section_heading=chunk.section_heading,
+            chunk_index=chunk.chunk_index,
+            relevance_score=round(score, 4),
+        )
+        for chunk, score in results
+    ]
+
+    return KnowledgeSearchResult(
+        chunks=chunks,
+        query=query,
+        documents_searched=_knowledge_base.document_names,
+        retrieval_method="tfidf",
+    ).model_dump()
 
 
 # --- Entrypoint ---

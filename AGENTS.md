@@ -56,8 +56,11 @@ User question → server.py → explainers.py → narrators.py → response
 - **`pipeline_compat.py`** — Bridge to colleague's Kedro pipeline artifacts.
   Reads `shap_values.npy`, `shap_expected_value.npy`, and `shap_metadata.json`.
   Includes `_detect_model_type()` attributed to Tamás's original implementation.
+- **`knowledge.py`** — Business context retrieval (ADR-009). Loads markdown
+  documents from `knowledge/`, chunks by heading, searches via TF-IDF.
+  Pure Python, no MCP imports. Supports "Glass Floor" provenance pattern.
 
-## MCP Tools (7 total)
+## MCP Tools (8 total)
 
 | Tool | Question it answers | Plot |
 |---|---|---|
@@ -68,6 +71,7 @@ User question → server.py → explainers.py → narrators.py → response
 | `explain_prediction` | Why was sample N classified as X? | SHAP bar |
 | `explain_prediction_waterfall` | Show the full SHAP breakdown | Waterfall |
 | `get_partial_dependence` | How does feature F affect predictions? | PDP+ICE |
+| `retrieve_business_context` | What should I do about this? (ADR-009) | — |
 
 ## Tool Output Contract
 
@@ -77,6 +81,11 @@ Every **success** returns: `narrative`, `evidence`, `metadata`, `plot_base64`,
 
 The `grounded: True` flag signals deterministic computation. If the LLM answers
 without calling a tool, it must prepend a ⚠️ disclaimer.
+
+`retrieve_business_context` returns a `KnowledgeSearchResult` (not `ToolResponse`)
+with `provenance_label: "ai-interpreted"`. The Glass Floor Protocol (ADR-009)
+requires the LLM to present deterministic output (Layer 1) separately from
+business context (Layer 2). See `.github/copilot-instructions.md` rule 6.
 
 ## Design Decisions (docs/decisions/)
 
@@ -90,6 +99,7 @@ without calling a tool, it must prepend a ⚠️ disclaimer.
 | 006 | ModelRegistry pattern — one central loader |
 | 007 | Single-agent architecture — LLM routes via tool descriptions |
 | 008 | Pipeline bridge — read pre-computed SHAP artifacts, don't recompute |
+| 009 | RAG augmentation with Glass Floor provenance separation |
 
 ## How to Add a New Model
 

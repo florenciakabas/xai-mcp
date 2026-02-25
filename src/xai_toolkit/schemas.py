@@ -226,3 +226,77 @@ class ErrorResponse(BaseModel):
         default=None,
         description="Closest-match suggestion (populated for typo-style errors like FEATURE_NOT_FOUND)",
     )
+
+
+# --- Knowledge / RAG schemas (ADR-009) ---
+
+
+class KnowledgeChunk(BaseModel):
+    """A single chunk of retrieved business context.
+
+    Each chunk traces back to a specific section of a specific document,
+    enabling the "Glass Floor" provenance requirement (ADR-009).
+
+    Example:
+        >>> chunk = KnowledgeChunk(
+        ...     text="Values > 14.0 mm are clinically significant...",
+        ...     source_document="clinical_protocol.md",
+        ...     document_id="PROTO-2024-BC-001",
+        ...     section_heading="mean_radius",
+        ...     chunk_index=4,
+        ...     relevance_score=0.82,
+        ... )
+        >>> chunk.source_document
+        'clinical_protocol.md'
+    """
+
+    text: str = Field(description="The chunk content")
+    source_document: str = Field(description="Filename the chunk was extracted from")
+    document_id: str = Field(
+        default="",
+        description="Document ID from metadata (e.g., 'PROTO-2024-BC-001')",
+    )
+    section_heading: str = Field(
+        description="The heading under which this chunk appeared"
+    )
+    chunk_index: int = Field(description="Position of this chunk within the document")
+    relevance_score: float = Field(
+        default=0.0,
+        description="Retrieval relevance score (0.0–1.0). Higher is more relevant.",
+    )
+
+
+class KnowledgeSearchResult(BaseModel):
+    """Result from searching the knowledge base.
+
+    Returned by the retrieve_business_context MCP tool.
+    Contains the retrieved chunks plus metadata for audit trail.
+
+    Example:
+        >>> result = KnowledgeSearchResult(
+        ...     chunks=[chunk],
+        ...     query="high risk malignant case",
+        ...     documents_searched=["clinical_protocol.md"],
+        ...     retrieval_method="tfidf",
+        ... )
+    """
+
+    chunks: list[KnowledgeChunk] = Field(
+        description="Retrieved chunks, ordered by relevance (highest first)"
+    )
+    query: str = Field(description="The original search query")
+    documents_searched: list[str] = Field(
+        description="List of document filenames that were searched"
+    )
+    retrieval_method: str = Field(
+        default="tfidf",
+        description="Retrieval algorithm used (for audit trail)",
+    )
+    provenance_label: str = Field(
+        default="ai-interpreted",
+        description=(
+            "Epistemic label for the Glass Floor pattern. "
+            "Always 'ai-interpreted' — signals that any synthesis "
+            "from these chunks is LLM-generated, not deterministic."
+        ),
+    )

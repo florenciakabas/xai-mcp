@@ -1,0 +1,34 @@
+# scenarios/rag/knowledge_base_loads.yaml
+# Phase: RAG augmentation
+# Prerequisite: knowledge/ directory contains at least one .md document
+#
+# This scenario validates that the knowledge module can parse markdown
+# documents into searchable chunks with proper metadata.
+
+scenario: "Business knowledge base loads and is searchable"
+phase: rag-augmentation
+
+given:
+  knowledge_dir: "knowledge/"
+  documents:
+    - "clinical_protocol.md"
+
+when:
+  system_loads_knowledge_base: true
+
+then:
+  # Document parsing
+  - documents_parsed_into_chunks: true
+  - each_chunk_has_field: "text"
+  - each_chunk_has_field: "source_document"
+  - each_chunk_has_field: "section_heading"
+  - chunk_count_greater_than: 3
+
+  # Search functionality
+  - search_for: "biopsy"
+  - search_returns_relevant_chunks: true
+  - top_result_mentions: "biopsy"
+
+  # Metadata integrity
+  - each_chunk_has_field: "document_id"
+  - each_chunk_has_field: "chunk_index"

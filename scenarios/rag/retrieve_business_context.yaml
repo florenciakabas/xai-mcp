@@ -1,0 +1,37 @@
+# scenarios/rag/retrieve_business_context.yaml
+# Phase: RAG augmentation
+# Prerequisite: knowledge base loaded with clinical_protocol.md
+#
+# This scenario validates the MCP tool that retrieves relevant chunks
+# from the knowledge base given a natural language query.
+
+scenario: "retrieve_business_context tool returns relevant chunks"
+phase: rag-augmentation
+
+given:
+  knowledge_dir: "knowledge/"
+  documents:
+    - "clinical_protocol.md"
+
+when:
+  tool_called: "retrieve_business_context"
+  with:
+    query: "What should I do for a high probability malignant case?"
+
+then:
+  # Response structure
+  - response_has_field: "chunks"
+  - response_has_field: "metadata"
+
+  # Chunk quality
+  - chunks_count_between: [1, 5]
+  - each_chunk_has_field: "text"
+  - each_chunk_has_field: "source"
+  - each_chunk_has_field: "section_heading"
+  - each_chunk_has_field: "relevance_score"
+  - top_chunk_mentions: "biopsy"
+
+  # Metadata for audit trail
+  - metadata_contains: "documents_searched"
+  - metadata_contains: "retrieval_method"
+  - metadata_contains: "query"
