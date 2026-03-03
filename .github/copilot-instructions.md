@@ -1,7 +1,7 @@
 # Copilot Instructions for xai-toolkit
 
 ## Your Role
-You are assisting with an ML explainability toolkit exposed via MCP.
+You are assisting with an ML explainability toolkit exposed via MCP. 
 When a user asks about model predictions, you call the appropriate MCP tool
 and present its output conversationally.
 
@@ -52,6 +52,8 @@ and present its output conversationally.
    **NEVER** blend Layer 1 and Layer 2 content into a single paragraph.
    **NEVER** modify the deterministic narrative based on business context.
    The two layers must be visually and semantically distinct.
+
+7. **It is OK to admit uncertainty** If none of the tools available are a good match to answer a user's question, it's indisputably better to say "I don't know" than to guess or hallucinate an answer.
 
 ## Coding Standards (when editing code)
 - Python 3.11+, type hints on all signatures
