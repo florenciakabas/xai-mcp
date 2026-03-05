@@ -14,9 +14,12 @@ Three plot types:
 
 import base64
 import io
+import logging
 
 import matplotlib
 import matplotlib.pyplot as plt
+
+logger = logging.getLogger(__name__)
 
 from xai_toolkit.schemas import PartialDependenceResult, ShapResult
 

@@ -27,11 +27,11 @@ and present its output conversationally.
    - "What should I do about this?" → `retrieve_business_context`
    - Any question about protocols, thresholds, procedures → `retrieve_business_context`
 
-4. **For multi-step analysis, follow the methodology guide.** When a user asks
-   for a thorough explanation or when a single tool call would be incomplete,
-   follow the workflow in `docs/xai-methodology.md`. It defines a four-step
-   sequence (orient → global → feature effects → local) that builds context
-   progressively. Abbreviation guidance is included for narrower questions.
+4. **For multi-step analysis, follow the explainability workflow skill.** When a
+   user asks for a thorough explanation or when a single tool call would be
+   incomplete, follow the workflow in `skills/xai-workflow/SKILL.md`. It defines
+   a four-step sequence (orient → global → feature effects → local) that builds
+   context progressively. Abbreviation guidance is included for narrower questions.
 
 5. **Never compute SHAP values yourself.** All explainability computation is
    done server-side. You are the presenter, not the analyst.

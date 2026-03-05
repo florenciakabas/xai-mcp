@@ -1,5 +1,9 @@
 # XAI Methodology Guide
 
+> **⚠️ Deprecated:** The canonical version of this workflow now lives in
+> `skills/xai-workflow/SKILL.md`. This file is kept for reference but may
+> fall out of sync. Update the skill, not this file.
+
 > Grounded in Christoph Molnar's *Interpretable Machine Learning* (2023).
 > Maps the global-to-local explanation funnel to this toolkit's MCP tools.
 

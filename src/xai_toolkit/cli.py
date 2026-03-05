@@ -36,6 +36,7 @@ from xai_toolkit.explainers import (
     compute_global_feature_importance,
     compute_model_summary,
     compute_partial_dependence,
+    compute_prediction_comparison,
     compute_shap_values,
 )
 from xai_toolkit.knowledge import load_knowledge_base, search_chunks
@@ -45,6 +46,7 @@ from xai_toolkit.narrators import (
     narrate_model_summary,
     narrate_partial_dependence,
     narrate_prediction,
+    narrate_prediction_comparison,
 )
 from xai_toolkit.plots import plot_pdp_ice, plot_shap_bar, plot_shap_waterfall
 from xai_toolkit.registry import ModelRegistry
@@ -314,6 +316,42 @@ def cmd_dataset(args: argparse.Namespace, registry: ModelRegistry) -> None:
     ))
 
 
+def cmd_compare(args: argparse.Namespace, registry: ModelRegistry) -> None:
+    """Compare predictions from two models on the same sample."""
+    for mid in (args.model1, args.model2):
+        try:
+            registry.get(mid)
+        except KeyError:
+            available = [m["model_id"] for m in registry.list_models()]
+            _output(_build_error("MODEL_NOT_FOUND", f"Model '{mid}' not registered.", available))
+            return
+
+    entry_1 = registry.get(args.model1)
+
+    try:
+        comparison = compute_prediction_comparison(
+            models=[
+                (args.model1, registry.get(args.model1).model, registry.get(args.model1).metadata),
+                (args.model2, registry.get(args.model2).model, registry.get(args.model2).metadata),
+            ],
+            X=entry_1.X_test,
+            sample_index=args.sample,
+        )
+    except IndexError as e:
+        _output(_build_error("SAMPLE_OUT_OF_RANGE", str(e), [f"0\u2013{len(entry_1.X_test) - 1}"]))
+        return
+
+    narrative = narrate_prediction_comparison(comparison)
+    data_hash = compute_data_hash(entry_1.X_test, sample_index=args.sample)
+
+    _output(_build_response(
+        narrative=narrative, evidence=comparison.model_dump(),
+        model_id=f"{args.model1} vs {args.model2}", model_type="comparison",
+        sample_index=args.sample, dataset_size=len(entry_1.X_test),
+        data_hash=data_hash,
+    ))
+
+
 def cmd_context(args: argparse.Namespace, kb: object) -> None:
     """Retrieve business context (RAG search).
 
@@ -398,6 +436,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("dataset", help="Describe a model's dataset")
     p.add_argument("--model", required=True, help="Model ID")
 
+    # compare
+    p = sub.add_parser("compare", help="Compare predictions from two models")
+    p.add_argument("--model1", required=True, help="First model ID")
+    p.add_argument("--model2", required=True, help="Second model ID")
+    p.add_argument("--sample", required=True, type=int, help="Sample index")
+
     # context (RAG)
     p = sub.add_parser("context", help="Retrieve business context")
     p.add_argument("--query", required=True, help="Search query")
@@ -419,6 +463,7 @@ _REGISTRY_COMMANDS = {
     "features": cmd_features,
     "pdp": cmd_pdp,
     "dataset": cmd_dataset,
+    "compare": cmd_compare,
 }
 
 

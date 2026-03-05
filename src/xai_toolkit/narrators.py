@@ -14,6 +14,7 @@ from xai_toolkit.schemas import (
     FeatureImportance,
     ModelSummary,
     PartialDependenceResult,
+    PredictionComparison,
     ShapResult,
 )
 
@@ -319,5 +320,114 @@ def narrate_dataset(description: DatasetDescription) -> str:
             f" There are {description.missing_values} missing values "
             f"across all features."
         )
+
+    return narrative
+
+
+def narrate_prediction_comparison(comparison: PredictionComparison) -> str:
+    """Convert a prediction comparison into an English narrative.
+
+    Covers agreement/disagreement, confidence gap, and shared/divergent
+    feature drivers between two models on the same sample.
+
+    Args:
+        comparison: Output from compute_prediction_comparison().
+
+    Returns:
+        A complete English paragraph comparing the two models' predictions.
+
+    Example:
+        >>> narrate_prediction_comparison(comparison)
+        "Both models agree: they classified this sample as benign..."
+    """
+    m1 = comparison.per_model[0]
+    m2 = comparison.per_model[1]
+
+    # --- Opening: agreement or disagreement ---
+    if comparison.agreement:
+        narrative = (
+            f"Both models agree: they classified this sample as "
+            f"{m1.predicted_label}. "
+            f"{m1.model_id} ({m1.model_type}) assigns probability {m1.probability:.2f}, "
+            f"while {m2.model_id} ({m2.model_type}) assigns {m2.probability:.2f}"
+        )
+        if comparison.confidence_gap < 0.05:
+            narrative += " — their confidence levels are very close."
+        else:
+            narrative += (
+                f" — a confidence gap of {comparison.confidence_gap:.2f}."
+            )
+    else:
+        narrative = (
+            f"The models disagree on this sample. "
+            f"{m1.model_id} ({m1.model_type}) classifies it as "
+            f"{m1.predicted_label} (probability: {m1.probability:.2f}), "
+            f"while {m2.model_id} ({m2.model_type}) classifies it as "
+            f"{m2.predicted_label} (probability: {m2.probability:.2f})."
+        )
+
+    # --- Shared drivers ---
+    if comparison.shared_top_features:
+        shared = comparison.shared_top_features
+        if len(shared) == 1:
+            narrative += (
+                f" Both models rely on {shared[0]} as a top driver."
+            )
+        else:
+            joined = ", ".join(shared[:-1]) + f" and {shared[-1]}"
+            narrative += (
+                f" Both models share {len(shared)} top drivers: {joined}."
+            )
+    else:
+        narrative += (
+            " The models rely on entirely different features in their "
+            "top drivers, suggesting fundamentally different reasoning paths."
+        )
+
+    # --- Divergent drivers ---
+    has_divergent = any(
+        len(feats) > 0 for feats in comparison.divergent_features.values()
+    )
+    if has_divergent:
+        parts = []
+        for model_id, feats in comparison.divergent_features.items():
+            if feats:
+                parts.append(
+                    f"{model_id} uniquely relies on {', '.join(feats)}"
+                )
+        if parts:
+            narrative += " " + "; ".join(parts) + "."
+
+    # --- Disagreement explanation ---
+    if not comparison.agreement:
+        # Identify which features push the models apart
+        m1_top_names = [f["name"] for f in m1.top_features]
+        m2_top_names = [f["name"] for f in m2.top_features]
+        m1_directions = {
+            f["name"]: f["direction"] for f in m1.top_features
+        }
+        m2_directions = {
+            f["name"]: f["direction"] for f in m2.top_features
+        }
+
+        # Find features where both models look at them but in opposite directions
+        opposing = []
+        for feat in comparison.shared_top_features:
+            if feat in m1_directions and feat in m2_directions:
+                if m1_directions[feat] != m2_directions[feat]:
+                    opposing.append(feat)
+
+        if opposing:
+            narrative += (
+                f" The disagreement may be driven by {', '.join(opposing)}, "
+                f"where the models interpret the feature's effect in "
+                f"opposite directions."
+            )
+        else:
+            narrative += (
+                " The disagreement stems from the models weighting "
+                "different features rather than interpreting the same "
+                "features differently."
+            )
 
     return narrative

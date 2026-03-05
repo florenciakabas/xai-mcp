@@ -6,6 +6,15 @@
 via MCP, so an LLM in VS Code Copilot can answer "Why did the model flag
 this well as high risk?" with a deterministic, SHAP-backed explanation.
 
+## Skills
+
+| Skill | Location | When to use |
+|---|---|---|
+| `xai-workflow` | `skills/xai-workflow/SKILL.md` | Conducting explainability analyses — defines tool sequencing, Glass Floor protocol, and abbreviation rules |
+
+Read the relevant skill before starting analysis work. The skill contains
+procedural expertise that ensures consistent, high-quality explanations.
+
 ## Commands
 
 ```bash

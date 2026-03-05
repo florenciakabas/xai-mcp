@@ -1,0 +1,93 @@
+# Scenario: Compare predictions across two models for the same sample
+# Author: Flor (human-authored scenario, agent-assisted refinement)
+# Status: PROPOSED — not yet implemented
+#
+# Origin: "When I give two models the same patient, I want to know:
+#   did they reach the same conclusion? With what confidence?
+#   And if they disagree, which features are driving the disagreement?"
+
+scenario: "Compare predictions from two models on the same sample"
+id: CP-S1
+
+given:
+  models:
+    - "xgboost_breast_cancer"
+    - "rf_breast_cancer"
+  sample_index: 42
+
+when:
+  tool_called: "compare_predictions"
+
+then:
+  # --- Structure ---
+  - response_has_field: "narrative"
+  - response_has_field: "evidence"
+  - response_has_field: "metadata"
+
+  # --- Per-model results in evidence ---
+  - evidence_has: "per_model"              # list of per-model results
+  - each_model_has: "model_id"
+  - each_model_has: "predicted_class"
+  - each_model_has: "probability"
+  - each_model_has: "top_features"         # top 3 SHAP contributors
+
+  # --- Agreement analysis ---
+  - evidence_has: "agreement"              # bool: do they predict same class?
+  - evidence_has: "confidence_gap"         # abs difference in probabilities
+
+  # --- Narrative qualities ---
+  - narrative_states_both_predictions: true
+  - narrative_states_agreement_or_disagreement: true
+  - narrative_compares_confidence: true
+  - narrative_highlights_shared_drivers: true     # features both models rely on
+  - narrative_highlights_divergent_drivers: true  # features where models differ
+
+  # --- Disagreement case (conditional) ---
+  # If models disagree on class:
+  - narrative_explains_why_they_diverge: true     # which features push them apart
+
+  # --- Auditability (ADR-005 compliance) ---
+  - metadata_has: "model_id"               # could be list or "comparison"
+  - metadata_has: "timestamp"
+  - metadata_has: "data_hash"
+  - grounded: true
+
+
+---
+# Companion scenario: edge case where models agree with high confidence
+scenario: "Both models agree with high confidence"
+id: CP-S2
+
+given:
+  models:
+    - "xgboost_breast_cancer"
+    - "rf_breast_cancer"
+  sample_index: 0   # typically a clear-cut case
+
+when:
+  tool_called: "compare_predictions"
+
+then:
+  - evidence_agreement: true
+  - narrative_emphasizes_consensus: true
+  - narrative_notes_shared_top_features: true
+
+
+---
+# Companion scenario: error handling
+scenario: "One model ID is invalid"
+id: CP-S3
+
+given:
+  models:
+    - "xgboost_breast_cancer"
+    - "nonexistent_model"
+  sample_index: 42
+
+when:
+  tool_called: "compare_predictions"
+
+then:
+  - returns_error_response: true
+  - error_message_names_invalid_model: true
+  - error_suggests_available_models: true

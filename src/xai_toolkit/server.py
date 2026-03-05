@@ -9,16 +9,15 @@ This is the ONLY file that imports MCP/FastMCP. It wires together:
 
 The server itself does NO computation or narrative generation.
 It is an adapter: receive request → call pure functions → return response.
-
-Day 3 additions:
-  - data_hash in every ToolMetadata (audit trail, D3-S2)
-  - Structured ErrorResponse for all failure modes (D3-S3, S4, S5)
 """
 
+import logging
 import re
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+
+logger = logging.getLogger(__name__)
 
 from xai_toolkit.explainers import (
     compute_data_hash,
@@ -26,6 +25,7 @@ from xai_toolkit.explainers import (
     compute_global_feature_importance,
     compute_model_summary,
     compute_partial_dependence,
+    compute_prediction_comparison,
     compute_shap_values,
 )
 from xai_toolkit.narrators import (
@@ -34,11 +34,13 @@ from xai_toolkit.narrators import (
     narrate_model_summary,
     narrate_partial_dependence,
     narrate_prediction,
+    narrate_prediction_comparison,
 )
 from xai_toolkit.knowledge import load_knowledge_base, search_chunks
 from xai_toolkit.plots import plot_pdp_ice, plot_shap_bar, plot_shap_waterfall
-from xai_toolkit.registry import ModelRegistry
+from xai_toolkit.registry import ModelRegistry, RegisteredModel
 from xai_toolkit.schemas import (
+    ErrorCode,
     ErrorResponse,
     KnowledgeChunk,
     KnowledgeSearchResult,
@@ -92,8 +94,9 @@ registry = ModelRegistry()
 for _model_id in ("xgboost_breast_cancer", "rf_breast_cancer"):
     try:
         registry.load_from_disk(_model_id, MODELS_DIR, DATA_DIR)
-    except FileNotFoundError as e:
-        print(f"Warning: Could not load {_model_id} at startup: {e}")
+        logger.info("Loaded model: %s", _model_id)
+    except FileNotFoundError:
+        logger.warning("Could not load model '%s' at startup.", _model_id)
 
 # --- Knowledge base initialization (ADR-009) ---
 
@@ -126,7 +129,7 @@ def _build_response(
 
 
 def _build_error(
-    error_code: str,
+    error_code: ErrorCode,
     message: str,
     available: list[str] | None = None,
     suggestion: str | None = None,
@@ -165,6 +168,31 @@ def _extract_suggestion(error_message: str) -> str | None:
     return None
 
 
+def _require_model(model_id: str) -> RegisteredModel | dict:
+    """Look up a model by ID, returning a structured error dict on failure.
+
+    Design pattern: Extract Method. Every tool function needs this same
+    lookup-or-error logic. Centralizing it ensures consistent error shape
+    and eliminates ~8 lines of duplication per tool.
+
+    Returns:
+        RegisteredModel on success, or a dict (ErrorResponse) on failure.
+        Callers check ``isinstance(result, dict)`` to detect errors.
+    """
+    try:
+        return registry.get(model_id)
+    except KeyError:
+        available = [m["model_id"] for m in registry.list_models()]
+        return _build_error(
+            error_code=ErrorCode.MODEL_NOT_FOUND,
+            message=(
+                f"Model '{model_id}' is not registered. "
+                f"Available models: {available}."
+            ),
+            available=available,
+        )
+
+
 # --- MCP Tools ---
 
 
@@ -185,18 +213,9 @@ def explain_prediction(
         sample_index: Row index in the test dataset to explain (0-based).
         include_plot: If True, include a SHAP bar chart as base64 PNG (default: True).
     """
-    try:
-        entry = registry.get(model_id)
-    except KeyError:
-        available = [m["model_id"] for m in registry.list_models()]
-        return _build_error(
-            error_code="MODEL_NOT_FOUND",
-            message=(
-                f"Model '{model_id}' is not registered. "
-                f"Available models: {available}."
-            ),
-            available=available,
-        )
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
 
     try:
         shap_result = compute_shap_values(
@@ -207,7 +226,7 @@ def explain_prediction(
         )
     except IndexError as e:
         return _build_error(
-            error_code="SAMPLE_OUT_OF_RANGE",
+            error_code=ErrorCode.SAMPLE_OUT_OF_RANGE,
             message=str(e),
             available=[f"0\u2013{len(entry.X_test) - 1}"],
         )
@@ -246,18 +265,9 @@ def explain_prediction_waterfall(
         model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
         sample_index: Row index in the test dataset to explain (0-based).
     """
-    try:
-        entry = registry.get(model_id)
-    except KeyError:
-        available = [m["model_id"] for m in registry.list_models()]
-        return _build_error(
-            error_code="MODEL_NOT_FOUND",
-            message=(
-                f"Model '{model_id}' is not registered. "
-                f"Available models: {available}."
-            ),
-            available=available,
-        )
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
 
     try:
         shap_result = compute_shap_values(
@@ -268,7 +278,7 @@ def explain_prediction_waterfall(
         )
     except IndexError as e:
         return _build_error(
-            error_code="SAMPLE_OUT_OF_RANGE",
+            error_code=ErrorCode.SAMPLE_OUT_OF_RANGE,
             message=str(e),
             available=[f"0\u2013{len(entry.X_test) - 1}"],
         )
@@ -300,18 +310,9 @@ def summarize_model(model_id: str) -> dict:
     Args:
         model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
     """
-    try:
-        entry = registry.get(model_id)
-    except KeyError:
-        available = [m["model_id"] for m in registry.list_models()]
-        return _build_error(
-            error_code="MODEL_NOT_FOUND",
-            message=(
-                f"Model '{model_id}' is not registered. "
-                f"Available models: {available}."
-            ),
-            available=available,
-        )
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
 
     summary = compute_model_summary(
         model=entry.model,
@@ -344,18 +345,9 @@ def compare_features(model_id: str, top_n: int = 10) -> dict:
         model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
         top_n: Number of top features to include (default: 10).
     """
-    try:
-        entry = registry.get(model_id)
-    except KeyError:
-        available = [m["model_id"] for m in registry.list_models()]
-        return _build_error(
-            error_code="MODEL_NOT_FOUND",
-            message=(
-                f"Model '{model_id}' is not registered. "
-                f"Available models: {available}."
-            ),
-            available=available,
-        )
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
 
     importances = compute_global_feature_importance(
         model=entry.model,
@@ -401,18 +393,9 @@ def get_partial_dependence(
         feature_name: Name of the feature to analyze (e.g., "mean radius").
         include_plot: If True, include a PDP+ICE plot as base64 PNG (default: True).
     """
-    try:
-        entry = registry.get(model_id)
-    except KeyError:
-        available = [m["model_id"] for m in registry.list_models()]
-        return _build_error(
-            error_code="MODEL_NOT_FOUND",
-            message=(
-                f"Model '{model_id}' is not registered. "
-                f"Available models: {available}."
-            ),
-            available=available,
-        )
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
 
     try:
         pdp_result = compute_partial_dependence(
@@ -424,7 +407,7 @@ def get_partial_dependence(
         error_str = str(e)
         suggestion = _extract_suggestion(error_str)
         return _build_error(
-            error_code="FEATURE_NOT_FOUND",
+            error_code=ErrorCode.FEATURE_NOT_FOUND,
             message=error_str,
             available=list(entry.X_test.columns),
             suggestion=suggestion,
@@ -501,18 +484,9 @@ def describe_dataset(model_id: str) -> dict:
     Args:
         model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
     """
-    try:
-        entry = registry.get(model_id)
-    except KeyError:
-        available = [m["model_id"] for m in registry.list_models()]
-        return _build_error(
-            error_code="MODEL_NOT_FOUND",
-            message=(
-                f"Model '{model_id}' is not registered. "
-                f"Available models: {available}."
-            ),
-            available=available,
-        )
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
 
     description = compute_dataset_description(
         X=entry.X_test,
@@ -529,6 +503,64 @@ def describe_dataset(model_id: str) -> dict:
         model_type=entry.metadata.get("model_type", "unknown"),
         detected_type=entry.metadata.get("detected_type"),
         dataset_size=len(entry.X_test),
+        data_hash=data_hash,
+    )
+
+
+@mcp.tool()
+def compare_predictions(
+    model_id_1: str,
+    model_id_2: str,
+    sample_index: int,
+) -> dict:
+    """Compare what two models predict for the same sample and explain why.
+
+    Returns whether the models agree, their confidence levels, and which
+    features they share or diverge on — all in plain English. Use this
+    to build trust in predictions by checking cross-model consistency.
+
+    Args:
+        model_id_1: ID of the first model (e.g., "xgboost_breast_cancer").
+        model_id_2: ID of the second model (e.g., "rf_breast_cancer").
+        sample_index: Row index in the test dataset to compare (0-based).
+    """
+    # Validate both models exist
+    models_data = []
+    for mid in (model_id_1, model_id_2):
+        result = _require_model(mid)
+        if isinstance(result, dict):
+            return result
+        models_data.append((mid, result))
+
+    # Use first model's test data (both share the same dataset)
+    entry_1 = models_data[0][1]
+
+    try:
+        comparison = compute_prediction_comparison(
+            models=[
+                (mid, entry.model, entry.metadata)
+                for mid, entry in models_data
+            ],
+            X=entry_1.X_test,
+            sample_index=sample_index,
+        )
+    except IndexError as e:
+        return _build_error(
+            error_code=ErrorCode.SAMPLE_OUT_OF_RANGE,
+            message=str(e),
+            available=[f"0\u2013{len(entry_1.X_test) - 1}"],
+        )
+
+    narrative = narrate_prediction_comparison(comparison)
+    data_hash = compute_data_hash(entry_1.X_test, sample_index=sample_index)
+
+    return _build_response(
+        narrative=narrative,
+        evidence=comparison.model_dump(),
+        model_id=f"{model_id_1} vs {model_id_2}",
+        model_type="comparison",
+        sample_index=sample_index,
+        dataset_size=len(entry_1.X_test),
         data_hash=data_hash,
     )
 

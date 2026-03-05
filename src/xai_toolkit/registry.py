@@ -10,13 +10,39 @@ pipeline-compatible type string stored as 'detected_type' in metadata.
 """
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from xai_toolkit.pipeline_compat import detect_model_type
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Model interface contract
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class ClassifierProtocol(Protocol):
+    """Structural type for fitted classifiers used by the toolkit.
+
+    Design pattern: Protocol (PEP 544) — defines the interface a model must
+    satisfy without requiring inheritance. This is Python's equivalent of
+    C++ concepts or Go interfaces: structural (duck) typing made explicit.
+
+    Any model that has predict() and predict_proba() satisfies this protocol,
+    whether it's sklearn, XGBoost, LightGBM, or a custom wrapper.
+    """
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray: ...
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray: ...
 
 
 @dataclass
@@ -24,7 +50,7 @@ class RegisteredModel:
     """A model and its associated metadata and data."""
 
     model_id: str
-    model: object  # fitted sklearn/xgboost model
+    model: ClassifierProtocol
     metadata: dict
     X_test: pd.DataFrame
     y_test: pd.Series
@@ -92,6 +118,14 @@ class ModelRegistry:
             metadata=metadata,
             X_test=X_test,
             y_test=y_test,
+        )
+        logger.info(
+            "Registered model '%s' (type=%s, detected=%s, features=%d, samples=%d)",
+            model_id,
+            metadata.get("model_type", "unknown"),
+            detected_type,
+            len(X_test.columns),
+            len(X_test),
         )
 
     def get(self, model_id: str) -> RegisteredModel:

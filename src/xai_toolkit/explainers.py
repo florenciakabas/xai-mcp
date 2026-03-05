@@ -20,6 +20,7 @@ and interactive exploration only.
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -27,12 +28,16 @@ import pandas as pd
 import shap
 from sklearn.inspection import partial_dependence
 
+logger = logging.getLogger(__name__)
+
 from xai_toolkit.schemas import (
     DatasetDescription,
     FeatureImportance,
     ModelSummary,
     PartialDependenceResult,
+    PredictionComparison,
     ShapResult,
+    SingleModelPrediction,
 )
 
 
@@ -83,6 +88,7 @@ def compute_shap_values(
     # to avoid version-specific model introspection issues between
     # shap and xgboost. The background sample provides the baseline.
     background = X.sample(n=min(50, len(X)), random_state=42)
+    logger.debug("Computing SHAP for sample %d (background=%d)", sample_index, len(background))
     explainer = shap.Explainer(model.predict_proba, background)
     shap_explanation = explainer(X.iloc[[sample_index]])
 
@@ -144,6 +150,10 @@ def compute_global_feature_importance(
         0.15
     """
     background = X.sample(n=min(50, len(X)), random_state=42)
+    logger.debug(
+        "Computing global SHAP importance (samples=%d, background=%d)",
+        len(X), len(background),
+    )
     explainer = shap.Explainer(model.predict_proba, background)
 
     # Compute SHAP for all samples (this is the expensive call)
@@ -357,6 +367,128 @@ def compute_dataset_description(
         class_distribution=class_distribution,
         missing_values=int(X.isna().sum().sum()),
         feature_stats=feature_stats,
+    )
+
+
+def _extract_top_features(
+    shap_result: ShapResult,
+    top_n: int = 3,
+) -> list[dict]:
+    """Extract top N SHAP contributors from a ShapResult.
+
+    Sorted by absolute SHAP magnitude. Each entry includes the feature
+    name, its SHAP value, actual feature value, and direction.
+
+    Args:
+        shap_result: Output from compute_shap_values().
+        top_n: Number of top features to return.
+
+    Returns:
+        List of dicts with keys: name, shap_value, feature_value, direction.
+    """
+    sorted_features = sorted(
+        shap_result.shap_values.items(),
+        key=lambda item: abs(item[1]),
+        reverse=True,
+    )
+    top = []
+    for name, shap_val in sorted_features[:top_n]:
+        top.append({
+            "name": name,
+            "shap_value": shap_val,
+            "feature_value": shap_result.feature_values.get(name, 0.0),
+            "direction": "positive" if shap_val > 0 else "negative",
+        })
+    return top
+
+
+def compute_prediction_comparison(
+    models: list[tuple[str, object, dict]],
+    X: pd.DataFrame,
+    sample_index: int,
+    top_n: int = 3,
+) -> PredictionComparison:
+    """Compare predictions from two models on the same sample.
+
+    Computes SHAP values for each model, then analyzes agreement,
+    confidence gap, and shared/divergent feature drivers.
+
+    Args:
+        models: List of (model_id, fitted_model, metadata) tuples.
+        X: Shared feature matrix (test set). Both models must use the same data.
+        sample_index: Which row in X to compare.
+        top_n: Number of top SHAP contributors per model (default: 3).
+
+    Returns:
+        PredictionComparison with per-model results and agreement analysis.
+
+    Raises:
+        IndexError: If sample_index is out of range.
+        ValueError: If fewer than 2 models are provided.
+
+    Example:
+        >>> models = [
+        ...     ("xgboost_breast_cancer", xgb_model, xgb_meta),
+        ...     ("rf_breast_cancer", rf_model, rf_meta),
+        ... ]
+        >>> comparison = compute_prediction_comparison(models, X_test, 42)
+        >>> comparison.agreement
+        True
+    """
+    if len(models) < 2:
+        raise ValueError(
+            f"compare_predictions requires at least 2 models, got {len(models)}."
+        )
+
+    if sample_index < 0 or sample_index >= len(X):
+        raise IndexError(
+            f"Sample index {sample_index} is out of range. "
+            f"Dataset has {len(X)} samples (valid indices: 0\u2013{len(X) - 1})."
+        )
+
+    per_model: list[SingleModelPrediction] = []
+
+    for model_id, model, metadata in models:
+        target_names = metadata.get("target_names", ["class_0", "class_1"])
+        shap_result = compute_shap_values(
+            model=model,
+            X=X,
+            sample_index=sample_index,
+            target_names=target_names,
+        )
+        top_features = _extract_top_features(shap_result, top_n=top_n)
+
+        per_model.append(SingleModelPrediction(
+            model_id=model_id,
+            model_type=metadata.get("model_type", "unknown"),
+            predicted_class=shap_result.prediction,
+            predicted_label=shap_result.prediction_label,
+            probability=shap_result.probability,
+            top_features=top_features,
+        ))
+
+    # Agreement analysis
+    agreement = per_model[0].predicted_class == per_model[1].predicted_class
+    confidence_gap = round(abs(per_model[0].probability - per_model[1].probability), 4)
+
+    # Shared vs divergent drivers
+    sets = {
+        entry.model_id: {f["name"] for f in entry.top_features}
+        for entry in per_model
+    }
+    all_sets = list(sets.values())
+    shared = sorted(all_sets[0] & all_sets[1])
+    divergent = {
+        mid: sorted(s - all_sets[1 - i])
+        for i, (mid, s) in enumerate(sets.items())
+    }
+
+    return PredictionComparison(
+        per_model=per_model,
+        agreement=agreement,
+        confidence_gap=confidence_gap,
+        shared_top_features=shared,
+        divergent_features=divergent,
     )
 
 

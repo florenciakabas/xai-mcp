@@ -4,9 +4,16 @@ These models define the shape of data flowing between layers:
   explainers.py → narrators.py → server.py
 
 No MCP imports here. These are pure data contracts.
+
+Type discipline:
+  - Literal types constrain string fields to documented valid values.
+  - Field validators enforce semantic bounds (probabilities ∈ [0,1], hashes = 64 hex).
+  - StrEnum for error codes ensures machine-readability without silent typos.
 """
 
 from datetime import datetime, timezone
+from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,9 +24,12 @@ from pydantic import BaseModel, Field
 class ShapResult(BaseModel):
     """Output from SHAP computation for a single sample."""
 
-    prediction: int = Field(description="Predicted class (0 or 1)")
-    prediction_label: str = Field(description="Human-readable class name")
-    probability: float = Field(description="Predicted probability for the positive class")
+    prediction: int = Field(ge=0, description="Predicted class (0 or 1)")
+    prediction_label: str = Field(min_length=1, description="Human-readable class name")
+    probability: float = Field(
+        ge=0.0, le=1.0,
+        description="Predicted probability for the positive class",
+    )
     base_value: float = Field(description="SHAP base value (average model output)")
     shap_values: dict[str, float] = Field(
         description="Feature name → SHAP value mapping"
@@ -34,8 +44,10 @@ class FeatureImportance(BaseModel):
     """A single feature's global importance."""
 
     name: str
-    importance: float = Field(description="Mean absolute SHAP value")
-    direction: str = Field(description="'positive' or 'negative' average effect")
+    importance: float = Field(ge=0.0, description="Mean absolute SHAP value")
+    direction: Literal["positive", "negative"] = Field(
+        description="Average effect direction on the positive class"
+    )
     mean_shap: float = Field(description="Mean SHAP value (signed)")
 
 
@@ -43,8 +55,8 @@ class ModelSummary(BaseModel):
     """Summary statistics about a model."""
 
     model_type: str
-    accuracy: float
-    n_features: int
+    accuracy: float = Field(ge=0.0, le=1.0)
+    n_features: int = Field(ge=1)
     n_train_samples: int
     n_test_samples: int
     target_names: list[str]
@@ -118,13 +130,14 @@ class ToolMetadata(BaseModel):
     dataset_size: int | None = None
     data_hash: str | None = Field(
         default=None,
+        pattern=r"^[a-f0-9]{64}$",
         description=(
             "SHA256 hex digest of the input data used to generate this explanation. "
             "Enables audit trail: same hash guarantees same underlying data. "
             "64 hex characters."
         ),
     )
-    source: str = Field(
+    source: Literal["on_the_fly", "pipeline"] = Field(
         default="on_the_fly",
         description=(
             "How this explanation was generated. "
@@ -194,6 +207,21 @@ class ToolResponse(BaseModel):
     )
 
 
+class ErrorCode(StrEnum):
+    """Machine-readable error codes for tool failures.
+
+    Using StrEnum (Python 3.11+) ensures that error codes are:
+      - Constrained to a known set at construction time.
+      - Serialized as plain strings in JSON (StrEnum inherits from str).
+      - Comparable with == against string literals for backward compatibility.
+    """
+
+    MODEL_NOT_FOUND = "MODEL_NOT_FOUND"
+    SAMPLE_OUT_OF_RANGE = "SAMPLE_OUT_OF_RANGE"
+    FEATURE_NOT_FOUND = "FEATURE_NOT_FOUND"
+    UNKNOWN_ERROR = "UNKNOWN_ERROR"
+
+
 class ErrorResponse(BaseModel):
     """Structured error returned when a tool call fails (D3-S3, S4, S5).
 
@@ -206,11 +234,8 @@ class ErrorResponse(BaseModel):
     Messages are plain English for human-readability.
     """
 
-    error_code: str = Field(
-        description=(
-            "Machine-readable error type. One of: "
-            "MODEL_NOT_FOUND | SAMPLE_OUT_OF_RANGE | FEATURE_NOT_FOUND | UNKNOWN_ERROR"
-        )
+    error_code: ErrorCode = Field(
+        description="Machine-readable error type from the ErrorCode enum."
     )
     message: str = Field(description="Human-readable explanation of what went wrong")
     available: list[str] = Field(
@@ -225,6 +250,51 @@ class ErrorResponse(BaseModel):
     suggestion: str | None = Field(
         default=None,
         description="Closest-match suggestion (populated for typo-style errors like FEATURE_NOT_FOUND)",
+    )
+
+
+# --- Prediction comparison schemas ---
+
+
+class SingleModelPrediction(BaseModel):
+    """One model's prediction for a single sample."""
+
+    model_id: str
+    model_type: str
+    predicted_class: int = Field(ge=0, description="Predicted class (0 or 1)")
+    predicted_label: str = Field(min_length=1, description="Human-readable class name")
+    probability: float = Field(
+        ge=0.0, le=1.0, description="Probability for positive class"
+    )
+    top_features: list[dict] = Field(
+        description=(
+            "Top N SHAP contributors. Each dict has 'name', 'shap_value', "
+            "'feature_value', 'direction'."
+        )
+    )
+
+
+class PredictionComparison(BaseModel):
+    """Result of comparing predictions from two models on the same sample."""
+
+    per_model: list[SingleModelPrediction] = Field(
+        description="Per-model prediction details"
+    )
+    agreement: bool = Field(
+        description="True if both models predict the same class"
+    )
+    confidence_gap: float = Field(
+        ge=0.0, le=1.0,
+        description="Absolute difference in predicted probabilities",
+    )
+    shared_top_features: list[str] = Field(
+        description="Feature names appearing in both models' top contributors"
+    )
+    divergent_features: dict[str, list[str]] = Field(
+        description=(
+            "Features unique to each model's top contributors. "
+            "Keys are model_ids, values are lists of feature names."
+        )
     )
 
 
@@ -262,7 +332,8 @@ class KnowledgeChunk(BaseModel):
     chunk_index: int = Field(description="Position of this chunk within the document")
     relevance_score: float = Field(
         default=0.0,
-        description="Retrieval relevance score (0.0–1.0). Higher is more relevant.",
+        ge=0.0,
+        description="Retrieval relevance score. Higher is more relevant.",
     )
 
 
@@ -288,15 +359,15 @@ class KnowledgeSearchResult(BaseModel):
     documents_searched: list[str] = Field(
         description="List of document filenames that were searched"
     )
-    retrieval_method: str = Field(
+    retrieval_method: Literal["tfidf", "embedding"] = Field(
         default="tfidf",
         description="Retrieval algorithm used (for audit trail)",
     )
-    provenance_label: str = Field(
+    provenance_label: Literal["ai-interpreted", "deterministic"] = Field(
         default="ai-interpreted",
         description=(
             "Epistemic label for the Glass Floor pattern. "
-            "Always 'ai-interpreted' — signals that any synthesis "
-            "from these chunks is LLM-generated, not deterministic."
+            "'ai-interpreted' signals that any synthesis from these chunks "
+            "is LLM-generated, not deterministic."
         ),
     )

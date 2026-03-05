@@ -16,12 +16,6 @@ dependencies = [
     "joblib",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-cov",
-]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -29,12 +23,48 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/xai_toolkit"]
 
+# ---------------------------------------------------------------------------
+# Dev dependencies — unified in dependency-groups (uv sync --group dev)
+# ---------------------------------------------------------------------------
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "syrupy>=5.1.0",
+    "ruff>=0.15.2",
+    "mypy>=1.10",
+]
+
+# ---------------------------------------------------------------------------
+# Tool configuration
+# ---------------------------------------------------------------------------
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
-[dependency-groups]
-dev = [
-    "ruff>=0.15.2",
-    "syrupy>=5.1.0",
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["xai_toolkit"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_untyped_defs = false  # start permissive, tighten over time

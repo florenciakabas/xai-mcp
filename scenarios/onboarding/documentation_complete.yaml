@@ -15,4 +15,4 @@ then:
   - ADRs_count_at_least_5: true
   - specs_tools_spec_matches_7_tools: true
   - scalability_path_md_is_complete: true
-  - all_scenario_files_present: true       # day1 through day5
+  - all_scenario_files_present: true       # organized by concern in scenarios/
