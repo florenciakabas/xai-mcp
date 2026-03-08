@@ -161,6 +161,7 @@ def cmd_explain(args: argparse.Namespace, registry: ModelRegistry) -> None:
         shap_result = compute_shap_values(
             model=entry.model, X=entry.X_test, sample_index=args.sample,
             target_names=entry.metadata.get("target_names"),
+            background_data=entry.X_train,
         )
     except IndexError as e:
         _output(_build_error("SAMPLE_OUT_OF_RANGE", str(e), [f"0–{len(entry.X_test) - 1}"]))
@@ -192,6 +193,7 @@ def cmd_waterfall(args: argparse.Namespace, registry: ModelRegistry) -> None:
         shap_result = compute_shap_values(
             model=entry.model, X=entry.X_test, sample_index=args.sample,
             target_names=entry.metadata.get("target_names"),
+            background_data=entry.X_train,
         )
     except IndexError as e:
         _output(_build_error("SAMPLE_OUT_OF_RANGE", str(e), [f"0–{len(entry.X_test) - 1}"]))
@@ -221,6 +223,7 @@ def cmd_summarize(args: argparse.Namespace, registry: ModelRegistry) -> None:
 
     summary = compute_model_summary(
         model=entry.model, X=entry.X_test, metadata=entry.metadata, top_n=5,
+        background_data=entry.X_train,
     )
     narrative = narrate_model_summary(summary)
     data_hash = compute_data_hash(entry.X_test)
@@ -263,6 +266,7 @@ def cmd_features(args: argparse.Namespace, registry: ModelRegistry) -> None:
     importances = compute_global_feature_importance(
         model=entry.model, X=entry.X_test,
         target_names=entry.metadata.get("target_names"),
+        background_data=entry.X_train,
     )
     narrative = narrate_feature_comparison(importances, top_n=args.top_n)
     data_hash = compute_data_hash(entry.X_test)
@@ -356,6 +360,7 @@ def cmd_compare(args: argparse.Namespace, registry: ModelRegistry) -> None:
             ],
             X=entry_1.X_test,
             sample_index=args.sample,
+            background_data=entry_1.X_train,
         )
     except IndexError as e:
         _output(_build_error("SAMPLE_OUT_OF_RANGE", str(e), [f"0\u2013{len(entry_1.X_test) - 1}"]))

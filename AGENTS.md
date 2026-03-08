@@ -21,11 +21,9 @@ procedural expertise that ensures consistent, high-quality explanations.
 # Run all tests (use this exact form — avoids Windows canonicalize-path errors)
 uv run python -m pytest
 
-# Run a specific test file
-uv run python -m pytest tests/test_narrators.py -v
-
-# Run tests matching a keyword
-uv run python -m pytest -k "waterfall" -v
+# Run a specific test file or keyword
+uv run python -m pytest tests/test_<module>.py -v
+uv run python -m pytest -k "<keyword>" -v
 
 # Train models (only needed if models/ is empty)
 uv run python scripts/train_toy_model.py      # XGBoost
@@ -40,14 +38,6 @@ uv run python -m xai_toolkit.cli explain --model xgboost_breast_cancer --sample 
 uv run python -m xai_toolkit.cli context --query "high risk biopsy"
 ```
 
-## The Golden Rule
-
-**The LLM is the presenter, not the analyst.**
-
-All analysis is done by pure Python functions. The LLM's only job is to
-choose the right MCP tool and present the pre-computed result conversationally.
-Same question + same data = same answer, always.
-
 ## Architecture (six layers, one direction)
 
 ```
@@ -59,14 +49,19 @@ User question → server.py → explainers.py → narrators.py → response
 ```
 
 - **`server.py`** — MCP adapter. Thin routing only. No computation here.
-- **`explainers.py`** — SHAP/PDP computation + data hashing. Two modes:
-  on-the-fly (`compute_shap_values`) or from pre-computed pipeline artifacts
-  (`load_shap_from_pipeline`). Both return the same `ShapResult` schema.
+- **`explainers.py`** — SHAP/PDP computation + data hashing + intrinsic
+  importance extraction. Two modes: on-the-fly (`compute_shap_values`) or from
+  pre-computed pipeline artifacts (`load_shap_from_pipeline`). Both return the
+  same `ShapResult` schema. `extract_intrinsic_importances()` handles models
+  with `coef_` or `feature_importances_` (adapted from Tamas's Kedro pipeline).
+  On-the-fly SHAP uses training data as background when available (TD-14 fix).
 - **`narrators.py`** — Structured data → deterministic English. No LLM calls.
+  Includes `narrate_intrinsic_importance()` for coefficient/importance narratives.
 - **`plots.py`** — matplotlib → base64 PNG. Three types: SHAP bar, waterfall,
   PDP+ICE overlay.
 - **`schemas.py`** — Pydantic models. Single source of truth for all contracts.
 - **`registry.py`** — `ModelRegistry`: load/list/get models. Central loader.
+  Loads `X_train` alongside `X_test` when available (for SHAP background).
 - **`pipeline_compat.py`** — Bridge to colleague's Kedro pipeline artifacts.
   Reads `shap_values.npy`, `shap_expected_value.npy`, and `shap_metadata.json`.
   Includes `_detect_model_type()` attributed to Tamás's original implementation.
@@ -77,7 +72,7 @@ User question → server.py → explainers.py → narrators.py → response
   JSON to stdout. Zero MCP dependency. For scripting, CI/CD, and
   environments where MCP servers are unavailable.
 
-## MCP Tools (8 total)
+## MCP Tools (9 total)
 
 | Tool | Question it answers | Plot |
 |---|---|---|
@@ -88,6 +83,7 @@ User question → server.py → explainers.py → narrators.py → response
 | `explain_prediction` | Why was sample N classified as X? | SHAP bar |
 | `explain_prediction_waterfall` | Show the full SHAP breakdown | Waterfall |
 | `get_partial_dependence` | How does feature F affect predictions? | PDP+ICE |
+| `compare_predictions` | Do two models agree on sample N? | — |
 | `retrieve_business_context` | What should I do about this? (ADR-009) | — |
 
 ## Tool Output Contract
@@ -96,13 +92,9 @@ Every **success** returns: `narrative`, `evidence`, `metadata`, `plot_base64`,
 `grounded` (always `True`). Every **failure** returns: `error_code`, `message`,
 `available`, `suggestion`. See `schemas.py` for exact Pydantic definitions.
 
-The `grounded: True` flag signals deterministic computation. If the LLM answers
-without calling a tool, it must prepend a ⚠️ disclaimer.
-
 `retrieve_business_context` returns a `KnowledgeSearchResult` (not `ToolResponse`)
-with `provenance_label: "ai-interpreted"`. The Glass Floor Protocol (ADR-009)
-requires the LLM to present deterministic output (Layer 1) separately from
-business context (Layer 2). See `.github/copilot-instructions.md` rule 6.
+with `provenance_label: "ai-interpreted"`. See the Glass Floor Protocol in
+`.github/copilot-instructions.md` for behavioral presentation rules.
 
 ## Design Decisions (docs/decisions/)
 
@@ -117,6 +109,7 @@ business context (Layer 2). See `.github/copilot-instructions.md` rule 6.
 | 007 | Single-agent architecture — LLM routes via tool descriptions |
 | 008 | Pipeline bridge — read pre-computed SHAP artifacts, don't recompute |
 | 009 | RAG augmentation with Glass Floor provenance separation |
+| 010 | Kedro pipeline integration map — function-by-function mapping |
 
 ## How to Add a New Model
 
@@ -139,7 +132,9 @@ No other code changes needed. The registry + parametrized tests handle the rest.
 - Pydantic v2 for all data contracts
 - pytest with parametrized tests for multi-model coverage
 - Google-style docstrings on all public functions
-- Scenario YAML written before implementing each feature (see `scenarios/`)
+- Tests cover narrators, explainers, plots, snapshots, reproducibility,
+  pipeline compat, knowledge, CLI, server errors, second model, comparisons,
+  intrinsic importances, and SHAP background data
 
 ## What NOT to Do
 

@@ -228,6 +228,7 @@ def explain_prediction(
             X=entry.X_test,
             sample_index=sample_index,
             target_names=entry.metadata.get("target_names"),
+            background_data=entry.X_train,
         )
     except IndexError as e:
         return _build_error(
@@ -280,6 +281,7 @@ def explain_prediction_waterfall(
             X=entry.X_test,
             sample_index=sample_index,
             target_names=entry.metadata.get("target_names"),
+            background_data=entry.X_train,
         )
     except IndexError as e:
         return _build_error(
@@ -324,6 +326,7 @@ def summarize_model(model_id: str) -> dict:
         X=entry.X_test,
         metadata=entry.metadata,
         top_n=5,
+        background_data=entry.X_train,
     )
     narrative = narrate_model_summary(summary)
     data_hash = compute_data_hash(entry.X_test)
@@ -376,6 +379,7 @@ def compare_features(model_id: str, top_n: int = 10) -> dict:
         model=entry.model,
         X=entry.X_test,
         target_names=entry.metadata.get("target_names"),
+        background_data=entry.X_train,
     )
     narrative = narrate_feature_comparison(importances, top_n=top_n)
     data_hash = compute_data_hash(entry.X_test)
@@ -566,6 +570,7 @@ def compare_predictions(
             ],
             X=entry_1.X_test,
             sample_index=sample_index,
+            background_data=entry_1.X_train,
         )
     except IndexError as e:
         return _build_error(

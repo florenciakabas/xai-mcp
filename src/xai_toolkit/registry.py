@@ -54,6 +54,7 @@ class RegisteredModel:
     metadata: dict
     X_test: pd.DataFrame
     y_test: pd.Series
+    X_train: pd.DataFrame | None = None
 
 
 class ModelRegistry:
@@ -106,6 +107,17 @@ class ModelRegistry:
         X_test = pd.read_csv(data_dir / f"{dataset_name}_test_X.csv")
         y_test = pd.read_csv(data_dir / f"{dataset_name}_test_y.csv").squeeze()
 
+        # Load training data if available (TD-14: used as SHAP background).
+        # Adapted from Tamas's explainability_node() which correctly uses
+        # X_train for background distribution and X_test for samples to explain.
+        X_train = None
+        train_path = data_dir / f"{dataset_name}_train_X.csv"
+        if train_path.exists():
+            X_train = pd.read_csv(train_path)
+            logger.info("Loaded training data for '%s' (%d samples)", model_id, len(X_train))
+        else:
+            logger.debug("No training data found at %s; SHAP will use test data as background.", train_path)
+
         # Detect model type using pipeline-compatible logic (Tamas's
         # _detect_model_type from the Kedro explainability pipeline).
         # This ensures our metadata matches what the pipeline would produce.
@@ -118,14 +130,16 @@ class ModelRegistry:
             metadata=metadata,
             X_test=X_test,
             y_test=y_test,
+            X_train=X_train,
         )
         logger.info(
-            "Registered model '%s' (type=%s, detected=%s, features=%d, samples=%d)",
+            "Registered model '%s' (type=%s, detected=%s, features=%d, test_samples=%d, train_samples=%s)",
             model_id,
             metadata.get("model_type", "unknown"),
             detected_type,
             len(X_test.columns),
             len(X_test),
+            len(X_train) if X_train is not None else "N/A",
         )
 
     def get(self, model_id: str) -> RegisteredModel:

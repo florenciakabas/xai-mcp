@@ -122,6 +122,7 @@ def compute_shap_values(
     X: pd.DataFrame,
     sample_index: int,
     target_names: list[str] | None = None,
+    background_data: pd.DataFrame | None = None,
 ) -> ShapResult:
     """Compute SHAP values for a single sample.
 
@@ -131,6 +132,10 @@ def compute_shap_values(
         sample_index: Which row in X to explain.
         target_names: Human-readable class names, e.g. ["malignant", "benign"].
             If None, uses ["class_0", "class_1"].
+        background_data: Optional training data to use as SHAP background
+            distribution. When provided, follows Tamas's correct methodology
+            (X_train for background, X_test for samples to explain). When None,
+            falls back to sampling from X (test data) — see TD-14.
 
     Returns:
         ShapResult with prediction info, SHAP values, and feature values.
@@ -163,8 +168,20 @@ def compute_shap_values(
     # Compute SHAP values. We pass model.predict_proba as a callable
     # to avoid version-specific model introspection issues between
     # shap and xgboost. The background sample provides the baseline.
-    background = X.sample(n=min(50, len(X)), random_state=42)
-    logger.debug("Computing SHAP for sample %d (background=%d)", sample_index, len(background))
+    # When background_data is provided (training data), use it per SHAP best
+    # practices (Lundberg's recommendation, Tamas's explainability_node).
+    if background_data is not None:
+        background = background_data.sample(n=min(50, len(background_data)), random_state=42)
+        logger.debug(
+            "Computing SHAP for sample %d (background=%d from training data)",
+            sample_index, len(background),
+        )
+    else:
+        background = X.sample(n=min(50, len(X)), random_state=42)
+        logger.debug(
+            "Computing SHAP for sample %d (background=%d from test data — TD-14)",
+            sample_index, len(background),
+        )
     explainer = shap.Explainer(model.predict_proba, background)
     shap_explanation = explainer(X.iloc[[sample_index]])
 
@@ -204,6 +221,7 @@ def compute_global_feature_importance(
     model,
     X: pd.DataFrame,
     target_names: list[str] | None = None,
+    background_data: pd.DataFrame | None = None,
 ) -> list[FeatureImportance]:
     """Compute mean absolute SHAP values across all samples (global importance).
 
@@ -214,6 +232,7 @@ def compute_global_feature_importance(
         model: A fitted model with a .predict_proba() method.
         X: Feature matrix to explain across.
         target_names: Human-readable class names.
+        background_data: Optional training data for SHAP background (TD-14).
 
     Returns:
         List of FeatureImportance, sorted by importance (highest first).
@@ -225,10 +244,12 @@ def compute_global_feature_importance(
         >>> importances[0].importance
         0.15
     """
-    background = X.sample(n=min(50, len(X)), random_state=42)
+    bg_source = background_data if background_data is not None else X
+    background = bg_source.sample(n=min(50, len(bg_source)), random_state=42)
     logger.debug(
-        "Computing global SHAP importance (samples=%d, background=%d)",
+        "Computing global SHAP importance (samples=%d, background=%d, source=%s)",
         len(X), len(background),
+        "training_data" if background_data is not None else "test_data",
     )
     explainer = shap.Explainer(model.predict_proba, background)
 
@@ -266,6 +287,7 @@ def compute_model_summary(
     X: pd.DataFrame,
     metadata: dict,
     top_n: int = 5,
+    background_data: pd.DataFrame | None = None,
 ) -> ModelSummary:
     """Compute a summary of model behavior and top features.
 
@@ -274,12 +296,13 @@ def compute_model_summary(
         X: Feature matrix (test set).
         metadata: Model metadata dict (from registry).
         top_n: Number of top features to include.
+        background_data: Optional training data for SHAP background (TD-14).
 
     Returns:
         ModelSummary with model info and top feature importances.
     """
     target_names = metadata.get("target_names", ["class_0", "class_1"])
-    importances = compute_global_feature_importance(model, X, target_names)
+    importances = compute_global_feature_importance(model, X, target_names, background_data=background_data)
 
     return ModelSummary(
         model_type=metadata.get("model_type", "unknown"),
@@ -483,6 +506,7 @@ def compute_prediction_comparison(
     X: pd.DataFrame,
     sample_index: int,
     top_n: int = 3,
+    background_data: pd.DataFrame | None = None,
 ) -> PredictionComparison:
     """Compare predictions from two models on the same sample.
 
@@ -494,6 +518,7 @@ def compute_prediction_comparison(
         X: Shared feature matrix (test set). Both models must use the same data.
         sample_index: Which row in X to compare.
         top_n: Number of top SHAP contributors per model (default: 3).
+        background_data: Optional training data for SHAP background (TD-14).
 
     Returns:
         PredictionComparison with per-model results and agreement analysis.
@@ -531,6 +556,7 @@ def compute_prediction_comparison(
             X=X,
             sample_index=sample_index,
             target_names=target_names,
+            background_data=background_data,
         )
         top_features = _extract_top_features(shap_result, top_n=top_n)
 

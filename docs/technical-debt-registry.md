@@ -3,7 +3,7 @@
 > **Created:** 2026-03-04
 > **Sources:** Claude Code audit + manual codebase review
 > **Status:** Active — track remediation as items are resolved
-> **Last updated:** 2026-03-04 — Phase 1 cleanup complete (see Resolved section)
+> **Last updated:** 2026-03-08 — TD-14 resolved (X_train as SHAP background)
 
 ---
 
@@ -233,17 +233,9 @@ def _require_model(model_id: str) -> RegisteredModel:
 
 ---
 
-## TD-14: On-the-fly SHAP uses test set as background data
+## ~~TD-14: On-the-fly SHAP uses test set as background data~~ → RESOLVED
 
-**Source:** Claude Code audit
-**Severity:** Medium (for production) | **Effort:** Low (documentation) to Moderate (fix) | **Area:** Explainers
-
-The on-the-fly computation uses `X_test` as both the background distribution and the source of samples to explain. SHAP methodology prescribes using the training set as background. The `source` field in metadata tracks this ("on_the_fly" vs "pipeline"), but a user comparing results from both modes could get different SHAP values without understanding why.
-
-**Remediation:**
-- Short-term: Add a prominent warning in the narrative when `source=on_the_fly` explaining the methodological limitation
-- Long-term: Load `X_train` alongside `X_test` in the registry and use it as background data
-- The Kedro pipeline path already handles this correctly
+See Resolved Items below.
 
 ---
 
@@ -309,7 +301,7 @@ Items that improve maintainability for the scaling phase:
 - **TD-12** — Refactor server.py initialization to factory pattern
 - **TD-13** — Extract model-lookup boilerplate into decorator/helper
 - **TD-08** — Add retrieval confidence threshold to RAG module
-- **TD-14** — Load training data as SHAP background
+- ~~**TD-14**~~ — ✅ Resolved (2026-03-08)
 
 ### Phase 4: Strategic decisions (requires ADR)
 Items that need architectural discussion before implementation:
@@ -331,7 +323,7 @@ These are documented, conscious design choices:
 
 ---
 
-## Resolved Items (2026-03-04)
+## Resolved Items
 
 | ID | Item | Resolution |
 |---|---|---|
@@ -342,4 +334,5 @@ These are documented, conscious design choices:
 | TD-11 | Split dev dependencies | Consolidated all dev deps into `[dependency-groups] dev` |
 | TD-13 | Repeated error-handling boilerplate | Extracted `_require_model()` helper; all 7 tools now use it |
 | TD-16 | No ruff configuration | Added `[tool.ruff]` with select rules, isort, line-length |
+| TD-14 | On-the-fly SHAP uses test set as background | Registry loads `X_train` when available; all SHAP callers pass `background_data=entry.X_train`; training scripts save `X_train` to disk. Adapted from Tamas's `explainability_node()` methodology (ADR-010). |
 | TD-17 | No logging outside knowledge.py | Added `logger = logging.getLogger(__name__)` to all modules; replaced `print()` with `logger.warning()` |

@@ -59,7 +59,9 @@ def main() -> None:
     # dataset_name convention without coupling to the XGBoost artifact.
     X_test.to_csv(DATA_DIR / "breast_cancer_test_X.csv", index=False)
     y_test.to_csv(DATA_DIR / "breast_cancer_test_y.csv", index=False)
-    print(f"Test data confirmed at {DATA_DIR}")
+    # Save training data (used as SHAP background distribution, fixing TD-14).
+    X_train.to_csv(DATA_DIR / "breast_cancer_train_X.csv", index=False)
+    print(f"Train/test data confirmed at {DATA_DIR}")
 
     metadata = {
         "model_id": "rf_breast_cancer",

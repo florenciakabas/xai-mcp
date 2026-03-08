@@ -50,7 +50,11 @@ def main() -> None:
     # Save test data (this is what we'll explain against)
     X_test.to_csv(DATA_DIR / "breast_cancer_test_X.csv", index=False)
     y_test.to_csv(DATA_DIR / "breast_cancer_test_y.csv", index=False)
-    print(f"Test data saved to {DATA_DIR}")
+    # Save training data (used as SHAP background distribution, fixing TD-14).
+    # Adapted from Tamas's explainability_node() which correctly uses X_train
+    # for background and X_test for samples to explain.
+    X_train.to_csv(DATA_DIR / "breast_cancer_train_X.csv", index=False)
+    print(f"Train/test data saved to {DATA_DIR}")
 
     # Save metadata for the registry
     metadata = {
