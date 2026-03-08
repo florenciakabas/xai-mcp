@@ -27,10 +27,12 @@ from xai_toolkit.explainers import (
     compute_partial_dependence,
     compute_prediction_comparison,
     compute_shap_values,
+    extract_intrinsic_importances,
 )
 from xai_toolkit.narrators import (
     narrate_dataset,
     narrate_feature_comparison,
+    narrate_intrinsic_importance,
     narrate_model_summary,
     narrate_partial_dependence,
     narrate_prediction,
@@ -56,7 +58,8 @@ mcp = FastMCP(
         "ML model explainability server. Provides plain-English explanations "
         "of model predictions backed by SHAP analysis. Call tools to get "
         "deterministic, reproducible explanations — do not interpret SHAP "
-        "values yourself. Embed the 'narrative' field naturally in your response; "
+        "values yourself. The LLM is the presenter, not the analyst. "
+        "Embed the 'narrative' field naturally in your response; "
         "it is the authoritative explanation and must not be supplemented or "
         "reinterpreted. When a response includes 'plot_base64', render it as "
         "an inline image. "
@@ -67,6 +70,8 @@ mcp = FastMCP(
         "'\u26a0\ufe0f This answer is based on my general knowledge, not computed "
         "from your registered models. It has not been verified against your data "
         "and should not be used for audit or governance purposes.' "
+        "If no tool matches the question, it is better to say 'I don't know' "
+        "than to guess. "
         "GLASS FLOOR PROTOCOL (ADR-009): When a user asks 'what should I do' "
         "or asks for recommendations after an explanation, call "
         "retrieve_business_context with a query derived from the explanation "
@@ -323,9 +328,27 @@ def summarize_model(model_id: str) -> dict:
     narrative = narrate_model_summary(summary)
     data_hash = compute_data_hash(entry.X_test)
 
+    evidence = summary.model_dump()
+
+    # Intrinsic importances (adapted from Tamas's _handle_intrinsically_explainable_model)
+    intrinsic_result = extract_intrinsic_importances(
+        model=entry.model,
+        feature_names=list(entry.X_test.columns),
+    )
+    if intrinsic_result is not None:
+        intrinsic, source_attr = intrinsic_result
+        intrinsic_narrative = narrate_intrinsic_importance(
+            importances=intrinsic,
+            model_type=entry.metadata.get("model_type", "unknown"),
+            n_features_total=len(entry.X_test.columns),
+            source_attr=source_attr,
+        )
+        narrative += "\n\n[Intrinsic Interpretability] " + intrinsic_narrative
+        evidence["intrinsic_importances"] = [f.model_dump() for f in intrinsic[:10]]
+
     return _build_response(
         narrative=narrative,
-        evidence=summary.model_dump(),
+        evidence=evidence,
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
         detected_type=entry.metadata.get("detected_type"),

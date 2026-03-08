@@ -41,6 +41,82 @@ from xai_toolkit.schemas import (
 )
 
 
+def extract_intrinsic_importances(
+    model: object,
+    feature_names: list[str],
+) -> tuple[list[FeatureImportance], str] | None:
+    """Extract intrinsic feature importances from models that expose them directly.
+
+    Adapted from Tamas's _handle_intrinsically_explainable_model() in
+    xai-xgboost-clf/src/xgboost_clf/pipelines/model_explanation/nodes.py
+    (lines 116-162).
+
+    Supports:
+    - Linear models with coef_ (logistic regression, linear SVM, etc.)
+    - Tree-based models with feature_importances_ (random forest, gradient boosting, etc.)
+
+    Unlike the original which saves to disk (.npy + metadata JSON), we return
+    in-memory Pydantic schemas per ADR-001 (separation of concerns).
+
+    Args:
+        model: A fitted model object.
+        feature_names: List of feature names matching model's input columns.
+
+    Returns:
+        Tuple of (list of FeatureImportance sorted by absolute importance,
+        source_attr string indicating "coef_" or "feature_importances_"),
+        or None if the model is not intrinsically explainable.
+    """
+    importance_array = None
+    source_attr = None
+
+    if hasattr(model, "coef_"):
+        importance_array = np.asarray(getattr(model, "coef_")).flatten()
+        source_attr = "coef_"
+        logger.info("Extracted coefficients from intrinsically explainable model.")
+    elif hasattr(model, "feature_importances_"):
+        importance_array = np.asarray(getattr(model, "feature_importances_"))
+        source_attr = "feature_importances_"
+        logger.info("Extracted feature importances from intrinsically explainable model.")
+
+    if importance_array is None:
+        logger.debug("Model is not intrinsically explainable (no coef_ or feature_importances_).")
+        return None
+
+    if len(importance_array) != len(feature_names):
+        logger.warning(
+            "Intrinsic importance length (%d) doesn't match feature count (%d); skipping.",
+            len(importance_array), len(feature_names),
+        )
+        return None
+
+    importances = []
+    for i, name in enumerate(feature_names):
+        val = float(importance_array[i])
+        if source_attr == "coef_":
+            # Coefficients have meaningful sign: positive = pushes toward positive class
+            direction = "positive" if val >= 0 else "negative"
+            imp = abs(val)
+            mean_shap = val  # Use raw coefficient as "mean_shap" analogue
+        else:
+            # feature_importances_ are magnitude-based (always non-negative)
+            direction = "positive"
+            imp = val
+            mean_shap = val
+
+        importances.append(
+            FeatureImportance(
+                name=name,
+                importance=round(imp, 6),
+                direction=direction,
+                mean_shap=round(mean_shap, 6),
+            )
+        )
+
+    importances.sort(key=lambda f: f.importance, reverse=True)
+    return importances, source_attr
+
+
 def compute_shap_values(
     model,
     X: pd.DataFrame,

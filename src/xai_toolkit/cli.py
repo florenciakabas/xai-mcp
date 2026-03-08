@@ -38,11 +38,13 @@ from xai_toolkit.explainers import (
     compute_partial_dependence,
     compute_prediction_comparison,
     compute_shap_values,
+    extract_intrinsic_importances,
 )
 from xai_toolkit.knowledge import load_knowledge_base, search_chunks
 from xai_toolkit.narrators import (
     narrate_dataset,
     narrate_feature_comparison,
+    narrate_intrinsic_importance,
     narrate_model_summary,
     narrate_partial_dependence,
     narrate_prediction,
@@ -223,8 +225,26 @@ def cmd_summarize(args: argparse.Namespace, registry: ModelRegistry) -> None:
     narrative = narrate_model_summary(summary)
     data_hash = compute_data_hash(entry.X_test)
 
+    evidence = summary.model_dump()
+
+    # Intrinsic importances (adapted from Tamas's _handle_intrinsically_explainable_model)
+    intrinsic_result = extract_intrinsic_importances(
+        model=entry.model,
+        feature_names=list(entry.X_test.columns),
+    )
+    if intrinsic_result is not None:
+        intrinsic, source_attr = intrinsic_result
+        intrinsic_narrative = narrate_intrinsic_importance(
+            importances=intrinsic,
+            model_type=entry.metadata.get("model_type", "unknown"),
+            n_features_total=len(entry.X_test.columns),
+            source_attr=source_attr,
+        )
+        narrative += "\n\n[Intrinsic Interpretability] " + intrinsic_narrative
+        evidence["intrinsic_importances"] = [f.model_dump() for f in intrinsic[:10]]
+
     _output(_build_response(
-        narrative=narrative, evidence=summary.model_dump(),
+        narrative=narrative, evidence=evidence,
         model_id=args.model, model_type=entry.metadata.get("model_type", "unknown"),
         detected_type=entry.metadata.get("detected_type"),
         dataset_size=len(entry.X_test), data_hash=data_hash,

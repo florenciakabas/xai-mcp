@@ -19,6 +19,67 @@ from xai_toolkit.schemas import (
 )
 
 
+def narrate_intrinsic_importance(
+    importances: list[FeatureImportance],
+    model_type: str,
+    n_features_total: int,
+    top_n: int = 5,
+    source_attr: str = "feature_importances_",
+) -> str:
+    """Generate a deterministic narrative for intrinsic feature importances.
+
+    Produces different narratives for coefficient-based (linear) vs
+    importance-based (tree) models, since they have different interpretations.
+
+    Args:
+        importances: Sorted list from extract_intrinsic_importances().
+        model_type: Model type string (e.g., "LogisticRegression", "RandomForestClassifier").
+        n_features_total: Total number of features in the model.
+        top_n: Number of top features to describe.
+        source_attr: Which model attribute the importances came from
+            ("coef_" or "feature_importances_").
+
+    Returns:
+        A deterministic English paragraph describing intrinsic importances.
+    """
+    if not importances:
+        return "No intrinsic feature importances are available for this model."
+
+    features = importances[:top_n]
+    is_coefficient_based = source_attr == "coef_"
+
+    if is_coefficient_based:
+        narrative = (
+            f"This {model_type} model exposes its coefficients directly "
+            f"(intrinsic interpretability). Out of {n_features_total} features, "
+            f"the top {len(features)} by absolute coefficient magnitude are: "
+        )
+        parts = []
+        for i, feat in enumerate(features, 1):
+            sign = "+" if feat.mean_shap >= 0 else ""
+            parts.append(
+                f"#{i} {feat.name} (coefficient: {sign}{feat.mean_shap:.4f} — "
+                f"each unit increase shifts the prediction by this amount)"
+            )
+    else:
+        narrative = (
+            f"This {model_type} model exposes its feature importances directly "
+            f"(intrinsic interpretability). Out of {n_features_total} features, "
+            f"the top {len(features)} by importance are: "
+        )
+        parts = []
+        total_importance = sum(f.importance for f in importances)
+        for i, feat in enumerate(features, 1):
+            pct = (feat.importance / total_importance * 100) if total_importance > 0 else 0
+            parts.append(
+                f"#{i} {feat.name} (importance: {feat.importance:.4f}, "
+                f"accounts for {pct:.1f}% of the model's decision splits)"
+            )
+
+    narrative += "; ".join(parts) + "."
+    return narrative
+
+
 def narrate_prediction(shap_result: ShapResult, top_n: int = 3) -> str:
     """Convert SHAP result for a single prediction into an English paragraph.
 
