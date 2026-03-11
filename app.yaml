@@ -1,0 +1,4 @@
+command: ["uv", "run", "xai-toolkit"]
+env:
+  - name: "XAI_TRANSPORT"
+    value: "http"

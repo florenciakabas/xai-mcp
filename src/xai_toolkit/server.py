@@ -811,29 +811,22 @@ def xai_methodology() -> str:
 
 # --- Entrypoint ---
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """Entry point for console_scripts and Databricks App deployment."""
     import os
 
     init_server()
 
     transport = os.environ.get("XAI_TRANSPORT", "stdio")
     if transport == "http":
-        port = int(os.environ.get("XAI_PORT", "8000"))
-        # Databricks Apps: stateless_http=True (no session affinity needed)
-        # See docs/decisions/003-transport-stdio-to-http.md
-        #
-        # Databricks App deployment (app.yaml):
-        #   command: ["python", "-m", "xai_toolkit.server"]
-        #   env:
-        #     - name: XAI_TRANSPORT
-        #       value: "http"
-        #     - name: XAI_PORT
-        #       value: "8000"
-        mcp.run(
-            transport="streamable-http",
-            host="0.0.0.0",
-            port=port,
-            stateless_http=True,
-        )
+        mcp.settings.host = "0.0.0.0"
+        mcp.settings.port = int(os.environ.get("XAI_PORT", "8000"))
+        mcp.settings.stateless_http = True
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

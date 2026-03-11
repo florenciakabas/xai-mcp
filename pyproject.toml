@@ -23,6 +23,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/xai_toolkit"]
 
+[project.scripts]
+xai-toolkit = "xai_toolkit.server:main"
+
 # ---------------------------------------------------------------------------
 # Dev dependencies — unified in dependency-groups (uv sync --group dev)
 # ---------------------------------------------------------------------------
