@@ -1,0 +1,7 @@
+# serializer version: 1
+# name: TestNarrateDatasetDrift.test_narrate_dataset_drift_snapshot
+  "3 of 12 features show significant drift (overall severity: severe). The most affected features are: `warehouse_lead_time` (PSI 0.31, severe), `order_frequency` (PSI 0.19, moderate), `unit_price` (PSI 0.14, moderate). This level of drift suggests the model's input data has changed substantially. Investigation is recommended to determine whether model retraining or recalibration is needed."
+# ---
+# name: TestNarrateFeatureDrift.test_narrate_feature_drift_snapshot
+  'Significant drift detected in feature `warehouse_lead_time` (PSI = 0.3100, severe), KS p-value = 0.0001. The distribution shifted rightward (increased) — median moved from 4.20 to 6.80. Additional context: mean: 4.20 → 6.80; spread widened (std: 1.50 → 1.80). Reference: 500 samples, current: 500 samples.'
+# ---

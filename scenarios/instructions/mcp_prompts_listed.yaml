@@ -1,0 +1,12 @@
+scenario: "MCP prompts are discoverable by the host"
+phase: mcp-prompts
+
+given:
+  server_running: true
+
+when:
+  client_lists_prompts: true
+
+then:
+  - prompt_listed: "xai_methodology"
+  - prompt_content_contains: "Explanation Funnel"

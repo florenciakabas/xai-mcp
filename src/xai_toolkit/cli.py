@@ -40,10 +40,16 @@ from xai_toolkit.explainers import (
     compute_shap_values,
     extract_intrinsic_importances,
 )
+from xai_toolkit.drift import (
+    detect_drift as compute_dataset_drift,
+    detect_feature_drift as compute_feature_drift,
+)
 from xai_toolkit.knowledge import load_knowledge_base, search_chunks
 from xai_toolkit.narrators import (
     narrate_dataset,
+    narrate_dataset_drift,
     narrate_feature_comparison,
+    narrate_feature_drift,
     narrate_intrinsic_importance,
     narrate_model_summary,
     narrate_partial_dependence,
@@ -377,6 +383,60 @@ def cmd_compare(args: argparse.Namespace, registry: ModelRegistry) -> None:
     ))
 
 
+def cmd_drift(args: argparse.Namespace, registry: ModelRegistry) -> None:
+    """Detect data drift between training and test data."""
+    try:
+        entry = registry.get(args.model)
+    except KeyError:
+        available = [m["model_id"] for m in registry.list_models()]
+        _output(_build_error("MODEL_NOT_FOUND", f"Model '{args.model}' not registered.", available))
+        return
+
+    if entry.X_train is None:
+        _output(_build_error("UNKNOWN_ERROR", f"Model '{args.model}' has no training data."))
+        return
+
+    drift_result = compute_dataset_drift(reference=entry.X_train, current=entry.X_test)
+    narrative = narrate_dataset_drift(drift_result)
+
+    _output(_build_response(
+        narrative=narrative, evidence=drift_result.model_dump(),
+        model_id=args.model, model_type=entry.metadata.get("model_type", "unknown"),
+        dataset_size=len(entry.X_test),
+    ))
+
+
+def cmd_feature_drift(args: argparse.Namespace, registry: ModelRegistry) -> None:
+    """Detect drift for a single feature."""
+    try:
+        entry = registry.get(args.model)
+    except KeyError:
+        available = [m["model_id"] for m in registry.list_models()]
+        _output(_build_error("MODEL_NOT_FOUND", f"Model '{args.model}' not registered.", available))
+        return
+
+    if entry.X_train is None:
+        _output(_build_error("UNKNOWN_ERROR", f"Model '{args.model}' has no training data."))
+        return
+
+    if args.feature not in entry.X_train.columns:
+        _output(_build_error("FEATURE_NOT_FOUND", f"Feature '{args.feature}' not found.", list(entry.X_train.columns)))
+        return
+
+    drift_result = compute_feature_drift(
+        reference=entry.X_train[args.feature],
+        current=entry.X_test[args.feature],
+        feature_name=args.feature,
+    )
+    narrative = narrate_feature_drift(drift_result)
+
+    _output(_build_response(
+        narrative=narrative, evidence=drift_result.model_dump(),
+        model_id=args.model, model_type=entry.metadata.get("model_type", "unknown"),
+        dataset_size=len(entry.X_test),
+    ))
+
+
 def cmd_context(args: argparse.Namespace, kb: object) -> None:
     """Retrieve business context (RAG search).
 
@@ -467,6 +527,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model2", required=True, help="Second model ID")
     p.add_argument("--sample", required=True, type=int, help="Sample index")
 
+    # drift
+    p = sub.add_parser("drift", help="Detect data drift across all features")
+    p.add_argument("--model", required=True, help="Model ID")
+
+    # feature-drift
+    p = sub.add_parser("feature-drift", help="Detect drift for a single feature")
+    p.add_argument("--model", required=True, help="Model ID")
+    p.add_argument("--feature", required=True, help="Feature name")
+
     # context (RAG)
     p = sub.add_parser("context", help="Retrieve business context")
     p.add_argument("--query", required=True, help="Search query")
@@ -489,6 +558,8 @@ _REGISTRY_COMMANDS = {
     "pdp": cmd_pdp,
     "dataset": cmd_dataset,
     "compare": cmd_compare,
+    "drift": cmd_drift,
+    "feature-drift": cmd_feature_drift,
 }
 
 

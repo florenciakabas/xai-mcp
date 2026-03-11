@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
+from xai_toolkit.instructions import get_glass_floor_principles, get_methodology_content
 from xai_toolkit.explainers import (
     compute_data_hash,
     compute_dataset_description,
@@ -29,9 +30,15 @@ from xai_toolkit.explainers import (
     compute_shap_values,
     extract_intrinsic_importances,
 )
+from xai_toolkit.drift import (
+    detect_drift as compute_dataset_drift,
+    detect_feature_drift as compute_feature_drift,
+)
 from xai_toolkit.narrators import (
     narrate_dataset,
+    narrate_dataset_drift,
     narrate_feature_comparison,
+    narrate_feature_drift,
     narrate_intrinsic_importance,
     narrate_model_summary,
     narrate_partial_dependence,
@@ -93,20 +100,26 @@ mcp = FastMCP(
 ROOT = Path(__file__).parent.parent.parent  # xai-mcp/
 MODELS_DIR = ROOT / "models"
 DATA_DIR = ROOT / "data"
+KNOWLEDGE_DIR = ROOT / "knowledge"
 
 registry = ModelRegistry()
+_knowledge_base: "KnowledgeBase | None" = None
 
-for _model_id in ("xgboost_breast_cancer", "rf_breast_cancer"):
-    try:
-        registry.load_from_disk(_model_id, MODELS_DIR, DATA_DIR)
-        logger.info("Loaded model: %s", _model_id)
-    except FileNotFoundError:
-        logger.warning("Could not load model '%s' at startup.", _model_id)
 
-# --- Knowledge base initialization (ADR-009) ---
-
-KNOWLEDGE_DIR = ROOT / "knowledge"
-_knowledge_base = load_knowledge_base(KNOWLEDGE_DIR)
+def init_server(
+    models_dir: Path = MODELS_DIR,
+    data_dir: Path = DATA_DIR,
+    knowledge_dir: Path = KNOWLEDGE_DIR,
+) -> None:
+    """Initialize models and knowledge base. Call before running server."""
+    global _knowledge_base
+    for model_id in ("xgboost_breast_cancer", "rf_breast_cancer"):
+        try:
+            registry.load_from_disk(model_id, models_dir, data_dir)
+            logger.info("Loaded model: %s", model_id)
+        except FileNotFoundError:
+            logger.warning("Could not load model '%s' at startup.", model_id)
+    _knowledge_base = load_knowledge_base(knowledge_dir)
 
 
 # --- Response builders ---
@@ -593,6 +606,108 @@ def compare_predictions(
     )
 
 
+# --- Drift detection tools ---
+
+
+@mcp.tool()
+def detect_drift(model_id: str) -> dict:
+    """Detect data drift between a model's training data and test data.
+
+    Compares the reference (training) distribution against the current
+    (test) distribution for every feature. Returns an aggregate summary
+    of which features drifted, by how much, and overall severity.
+
+    Numeric features are tested with PSI (primary) and KS (supporting).
+    Categorical features are tested with chi-squared.
+
+    Args:
+        model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
+    """
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
+
+    if entry.X_train is None:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=(
+                f"Model '{model_id}' has no training data (X_train). "
+                "Drift detection requires both reference and current data."
+            ),
+        )
+
+    drift_result = compute_dataset_drift(
+        reference=entry.X_train,
+        current=entry.X_test,
+    )
+    narrative = narrate_dataset_drift(drift_result)
+
+    return _build_response(
+        narrative=narrative,
+        evidence=drift_result.model_dump(),
+        model_id=model_id,
+        model_type=entry.metadata.get("model_type", "unknown"),
+        dataset_size=len(entry.X_test),
+    )
+
+
+@mcp.tool()
+def detect_feature_drift(model_id: str, feature_name: str) -> dict:
+    """Detect drift for a single feature between training and test data.
+
+    Returns detailed drift analysis for one feature: statistical test
+    results, severity, how the distribution shifted (direction, magnitude),
+    and reference vs. current distribution summaries.
+
+    Args:
+        model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
+        feature_name: Name of the feature to analyze (e.g., "mean radius").
+    """
+    entry = _require_model(model_id)
+    if isinstance(entry, dict):
+        return entry
+
+    if entry.X_train is None:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=(
+                f"Model '{model_id}' has no training data (X_train). "
+                "Drift detection requires both reference and current data."
+            ),
+        )
+
+    if feature_name not in entry.X_train.columns:
+        from difflib import get_close_matches
+
+        available = list(entry.X_train.columns)
+        close = get_close_matches(feature_name, available, n=3, cutoff=0.4)
+        return _build_error(
+            error_code=ErrorCode.FEATURE_NOT_FOUND,
+            message=(
+                f"Feature '{feature_name}' not found. "
+                f"Did you mean: {close}? "
+                f"Available features: {available}"
+            ),
+            available=available,
+            suggestion=close[0] if close else None,
+        )
+
+    drift_result = compute_feature_drift(
+        reference=entry.X_train[feature_name],
+        current=entry.X_test[feature_name],
+        feature_name=feature_name,
+    )
+    narrative = narrate_feature_drift(drift_result)
+
+    return _build_response(
+        narrative=narrative,
+        evidence=drift_result.model_dump(),
+        model_id=model_id,
+        model_type=entry.metadata.get("model_type", "unknown"),
+        dataset_size=len(entry.X_test),
+    )
+
+
 # --- Knowledge / RAG tool (ADR-009) ---
 
 
@@ -620,7 +735,7 @@ def retrieve_business_context(
         query: Natural language search query (e.g., 'high risk biopsy referral').
         top_k: Maximum number of chunks to return (default: 5).
     """
-    if not _knowledge_base.chunks:
+    if _knowledge_base is None or not _knowledge_base.chunks:
         return KnowledgeSearchResult(
             chunks=[],
             query=query,
@@ -650,7 +765,75 @@ def retrieve_business_context(
     ).model_dump()
 
 
+# --- Instruction-serving tools ---
+
+
+@mcp.tool()
+def get_xai_methodology() -> str:
+    """Retrieve the XAI analysis methodology guide.
+
+    Call this BEFORE starting any model explanation to understand the correct
+    tool sequence (explanation funnel), Glass Floor protocol, and anti-patterns
+    to avoid. Returns the full workflow guide.
+    """
+    try:
+        return get_methodology_content(ROOT)
+    except FileNotFoundError:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=(
+                "SKILL.md not found at "
+                f"{ROOT / 'skills' / 'xai-workflow' / 'SKILL.md'}. "
+                "Ensure the skills/xai-workflow/ directory exists."
+            ),
+            suggestion="Check that the repository is complete and SKILL.md has not been removed.",
+        )
+
+
+@mcp.tool()
+def get_glass_floor() -> str:
+    """Retrieve the Glass Floor separation principles for presenting model explanations alongside business context.
+
+    Call this when you need to present both deterministic model outputs and
+    AI-interpreted business guidance. Returns the two-layer separation protocol.
+    """
+    return get_glass_floor_principles()
+
+
+# --- MCP Prompts ---
+
+
+@mcp.prompt()
+def xai_methodology() -> str:
+    """The XAI analysis methodology — explanation funnel, Glass Floor, anti-patterns."""
+    return get_methodology_content(ROOT)
+
+
 # --- Entrypoint ---
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    import os
+
+    init_server()
+
+    transport = os.environ.get("XAI_TRANSPORT", "stdio")
+    if transport == "http":
+        port = int(os.environ.get("XAI_PORT", "8000"))
+        # Databricks Apps: stateless_http=True (no session affinity needed)
+        # See docs/decisions/003-transport-stdio-to-http.md
+        #
+        # Databricks App deployment (app.yaml):
+        #   command: ["python", "-m", "xai_toolkit.server"]
+        #   env:
+        #     - name: XAI_TRANSPORT
+        #       value: "http"
+        #     - name: XAI_PORT
+        #       value: "8000"
+        mcp.run(
+            transport="streamable-http",
+            host="0.0.0.0",
+            port=port,
+            stateless_http=True,
+        )
+    else:
+        mcp.run(transport="stdio")

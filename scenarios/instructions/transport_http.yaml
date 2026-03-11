@@ -1,0 +1,14 @@
+scenario: "Server starts with HTTP transport when configured"
+phase: configurable-transport
+
+given:
+  env_XAI_TRANSPORT: "http"
+  env_XAI_PORT: "9000"
+
+when:
+  server_starts: true
+
+then:
+  - transport_mode: "streamable-http"
+  - listening_port: 9000
+  - stateless_http: true

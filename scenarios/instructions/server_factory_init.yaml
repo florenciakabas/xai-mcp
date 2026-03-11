@@ -1,0 +1,14 @@
+scenario: "Server initializes cleanly via factory function"
+phase: factory-pattern
+
+given:
+  models_dir_exists: true
+  knowledge_dir_exists: true
+
+when:
+  init_server_called: true
+
+then:
+  - models_loaded: ["xgboost_breast_cancer", "rf_breast_cancer"]
+  - knowledge_base_loaded: true
+  - no_import_time_side_effects: true

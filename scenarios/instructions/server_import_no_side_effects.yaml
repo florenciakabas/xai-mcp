@@ -1,0 +1,13 @@
+scenario: "Importing server.py does not load models"
+phase: factory-pattern
+
+given:
+  server_module_not_yet_imported: true
+
+when:
+  import_server_module: true
+
+then:
+  - registry_is_empty: true
+  - knowledge_base_is_none: true
+  - no_file_io_occurred: true

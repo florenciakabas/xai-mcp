@@ -1,0 +1,16 @@
+scenario: "LLM retrieves methodology before analysis"
+phase: instruction-serving
+
+given:
+  server_running: true
+  skill_file_exists: "skills/xai-workflow/SKILL.md"
+
+when:
+  tool_called: "get_xai_methodology"
+
+then:
+  - response_contains: "Explanation Funnel"
+  - response_contains: "Glass Floor Protocol"
+  - response_contains: "When to Abbreviate"
+  - response_is_string: true
+  - response_length_greater_than: 500

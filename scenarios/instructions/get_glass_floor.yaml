@@ -1,0 +1,16 @@
+scenario: "LLM retrieves Glass Floor principles"
+phase: instruction-serving
+
+given:
+  server_running: true
+
+when:
+  tool_called: "get_glass_floor_principles"
+
+then:
+  - response_contains: "Layer 1"
+  - response_contains: "Layer 2"
+  - response_contains: "deterministic"
+  - response_contains: "ai-interpreted"
+  - response_contains: "provenance"
+  - response_is_string: true

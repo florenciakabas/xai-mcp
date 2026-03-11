@@ -11,7 +11,9 @@ content varies by explanation type.
 
 from xai_toolkit.schemas import (
     DatasetDescription,
+    DatasetDriftResult,
     FeatureImportance,
+    FeatureDriftResult,
     ModelSummary,
     PartialDependenceResult,
     PredictionComparison,
@@ -490,5 +492,146 @@ def narrate_prediction_comparison(comparison: PredictionComparison) -> str:
                 "different features rather than interpreting the same "
                 "features differently."
             )
+
+    return narrative
+
+
+# --- Drift narrators ---
+
+
+def narrate_feature_drift(result: FeatureDriftResult) -> str:
+    """Convert a per-feature drift result into an English paragraph.
+
+    Leads with severity, describes shift direction and magnitude,
+    includes supporting statistical evidence. Does not speculate
+    about causes (epistemic honesty — ADR-002).
+
+    Args:
+        result: Output from detect_feature_drift().
+
+    Returns:
+        A deterministic English paragraph describing drift for one feature.
+    """
+    name = result.feature_name
+
+    if not result.drift_detected:
+        return (
+            f"No significant drift detected in feature `{name}`. "
+            f"The distribution remains stable between reference and current data "
+            f"({result.test_name} statistic = {result.statistic:.4f}"
+            + (f", p-value = {result.p_value:.4f}" if result.p_value is not None else "")
+            + ")."
+        )
+
+    # --- Drifted feature: severity first ---
+    test_label = {
+        "psi": "PSI",
+        "ks": "KS",
+        "chi_squared": "chi-squared",
+    }[result.test_name]
+
+    narrative = (
+        f"Significant drift detected in feature `{name}` "
+        f"({test_label} = {result.statistic:.4f}, {result.severity})"
+    )
+
+    # Supporting p-value for PSI (KS p-value is secondary evidence)
+    if result.p_value is not None and result.test_name == "psi":
+        narrative += f", KS p-value = {result.p_value:.4f}"
+
+    narrative += "."
+
+    # --- Shift direction (numeric features) ---
+    ref = result.reference_summary
+    cur = result.current_summary
+
+    median_diff = cur.median - ref.median
+    if result.test_name in ("psi", "ks"):
+        if abs(median_diff) > 1e-6:
+            direction = "rightward (increased)" if median_diff > 0 else "leftward (decreased)"
+            narrative += (
+                f" The distribution shifted {direction} — "
+                f"median moved from {ref.median:.2f} to {cur.median:.2f}."
+            )
+
+        # Mean and std context
+        mean_diff = cur.mean - ref.mean
+        std_change = cur.std - ref.std
+        parts = []
+        if abs(mean_diff) > 1e-6:
+            parts.append(f"mean: {ref.mean:.2f} → {cur.mean:.2f}")
+        if abs(std_change) > 0.01:
+            direction_std = "widened" if std_change > 0 else "narrowed"
+            parts.append(f"spread {direction_std} (std: {ref.std:.2f} → {cur.std:.2f})")
+        if parts:
+            narrative += f" Additional context: {'; '.join(parts)}."
+    else:
+        # Categorical: less meaningful to describe shift direction
+        narrative += (
+            f" The category distribution has changed significantly "
+            f"(p-value = {result.p_value:.4f})."
+        )
+
+    # Sample sizes
+    narrative += (
+        f" Reference: {ref.n_samples} samples, current: {cur.n_samples} samples."
+    )
+
+    return narrative
+
+
+def narrate_dataset_drift(result: DatasetDriftResult) -> str:
+    """Convert aggregate drift results into an English summary.
+
+    Ranks drifted features by severity, states overall drift level,
+    and frames whether the drift warrants investigation. Does not
+    speculate about causes (epistemic honesty — ADR-002).
+
+    Args:
+        result: Output from detect_drift().
+
+    Returns:
+        A deterministic English paragraph summarizing dataset-level drift.
+    """
+    if result.n_drifted == 0:
+        return (
+            f"No significant drift detected across any of the "
+            f"{result.n_features} features. The input distributions "
+            f"remain stable between reference and current data."
+        )
+
+    # --- Opening: count and severity ---
+    narrative = (
+        f"{result.n_drifted} of {result.n_features} features show "
+        f"significant drift (overall severity: {result.overall_severity})."
+    )
+
+    # --- Ranked list of drifted features ---
+    drifted = [f for f in result.features if f.drift_detected]
+    severity_order = {"severe": 0, "moderate": 1, "none": 2}
+    drifted.sort(key=lambda f: (severity_order[f.severity], -f.statistic))
+
+    test_label = {"psi": "PSI", "ks": "KS", "chi_squared": "chi-squared"}
+
+    parts = []
+    for f in drifted:
+        label = test_label.get(f.test_name, f.test_name)
+        parts.append(f"`{f.feature_name}` ({label} {f.statistic:.2f}, {f.severity})")
+
+    narrative += " The most affected features are: " + ", ".join(parts) + "."
+
+    # --- "So what" framing ---
+    if result.overall_severity == "severe":
+        narrative += (
+            " This level of drift suggests the model's input data has changed "
+            "substantially. Investigation is recommended to determine whether "
+            "model retraining or recalibration is needed."
+        )
+    elif result.overall_severity == "moderate":
+        narrative += (
+            " Moderate drift has been detected. The affected features should "
+            "be monitored; if drift persists or worsens, model performance "
+            "may degrade."
+        )
 
     return narrative

@@ -35,14 +35,16 @@ uv run python -m xai_toolkit.server
 # CLI interface (same functions, no MCP dependency)
 uv run python -m xai_toolkit.cli models
 uv run python -m xai_toolkit.cli explain --model xgboost_breast_cancer --sample 0
+uv run python -m xai_toolkit.cli drift --model xgboost_breast_cancer
+uv run python -m xai_toolkit.cli feature-drift --model xgboost_breast_cancer --feature "mean radius"
 uv run python -m xai_toolkit.cli context --query "high risk biopsy"
 ```
 
-## Architecture (six layers, one direction)
+## Architecture (seven layers, one direction)
 
 ```
 User question → server.py → explainers.py → narrators.py → response
-                    ↓              ↓
+                    ↓        drift.py ↗          ↑
                schemas.py      plots.py
                     ↓
               registry.py
@@ -55,8 +57,12 @@ User question → server.py → explainers.py → narrators.py → response
   same `ShapResult` schema. `extract_intrinsic_importances()` handles models
   with `coef_` or `feature_importances_` (adapted from Tamas's Kedro pipeline).
   On-the-fly SHAP uses training data as background when available (TD-14 fix).
+- **`drift.py`** — Pure drift detection (ADR-011). Thin scipy wrappers:
+  KS test, PSI, chi-squared. Auto-selects test by dtype. Stateless — caller
+  provides both reference and current DataFrames. Same role as `explainers.py`.
 - **`narrators.py`** — Structured data → deterministic English. No LLM calls.
-  Includes `narrate_intrinsic_importance()` for coefficient/importance narratives.
+  Includes `narrate_intrinsic_importance()` for coefficient/importance narratives,
+  and `narrate_feature_drift()` / `narrate_dataset_drift()` for drift results.
 - **`plots.py`** — matplotlib → base64 PNG. Three types: SHAP bar, waterfall,
   PDP+ICE overlay.
 - **`schemas.py`** — Pydantic models. Single source of truth for all contracts.
@@ -72,7 +78,7 @@ User question → server.py → explainers.py → narrators.py → response
   JSON to stdout. Zero MCP dependency. For scripting, CI/CD, and
   environments where MCP servers are unavailable.
 
-## MCP Tools (9 total)
+## MCP Tools (13 total)
 
 | Tool | Question it answers | Plot |
 |---|---|---|
@@ -84,7 +90,11 @@ User question → server.py → explainers.py → narrators.py → response
 | `explain_prediction_waterfall` | Show the full SHAP breakdown | Waterfall |
 | `get_partial_dependence` | How does feature F affect predictions? | PDP+ICE |
 | `compare_predictions` | Do two models agree on sample N? | — |
+| `detect_drift` | Has the model's input data drifted? (ADR-011) | — |
+| `detect_feature_drift` | How has feature F's distribution changed? (ADR-011) | — |
 | `retrieve_business_context` | What should I do about this? (ADR-009) | — |
+| `get_xai_methodology` | How should I sequence my analysis? | — |
+| `get_glass_floor` | How do I separate model facts from business context? | — |
 
 ## Tool Output Contract
 
@@ -110,6 +120,33 @@ with `provenance_label: "ai-interpreted"`. See the Glass Floor Protocol in
 | 008 | Pipeline bridge — read pre-computed SHAP artifacts, don't recompute |
 | 009 | RAG augmentation with Glass Floor provenance separation |
 | 010 | Kedro pipeline integration map — function-by-function mapping |
+| 011 | Stateless drift detection — caller provides both DataFrames |
+
+## Server Initialization
+
+The server uses a factory pattern (TD-12): importing `server.py` does NOT
+load models or knowledge. Call `init_server()` explicitly before running:
+
+```python
+from xai_toolkit.server import init_server, mcp
+init_server()          # loads models + knowledge base
+mcp.run(transport=...) # start serving
+```
+
+The `if __name__ == "__main__"` block handles this automatically.
+Tests use a session-scoped `conftest.py` fixture that calls `init_server()`.
+
+### Configurable Transport
+
+Set `XAI_TRANSPORT` env var to switch between stdio (default) and HTTP:
+
+```bash
+# stdio (default, VS Code Copilot)
+uv run python -m xai_toolkit.server
+
+# HTTP (Databricks Apps)
+XAI_TRANSPORT=http XAI_PORT=9000 uv run python -m xai_toolkit.server
+```
 
 ## How to Add a New Model
 
@@ -117,8 +154,8 @@ with `provenance_label: "ai-interpreted"`. See the Glass Floor Protocol in
 # 1. Train and save (adapt train_rf_model.py for your model type)
 uv run python scripts/train_rf_model.py
 
-# 2. Add one line to server.py startup:
-registry.load_from_disk("your_model_id", MODELS_DIR, DATA_DIR)
+# 2. Add one line to init_server() in server.py:
+registry.load_from_disk("your_model_id", models_dir, data_dir)
 
 # 3. Run the test suite — all tools work automatically:
 uv run python -m pytest tests/test_second_model.py -v
@@ -132,7 +169,7 @@ No other code changes needed. The registry + parametrized tests handle the rest.
 - Pydantic v2 for all data contracts
 - pytest with parametrized tests for multi-model coverage
 - Google-style docstrings on all public functions
-- Tests cover narrators, explainers, plots, snapshots, reproducibility,
+- Tests cover narrators, explainers, drift, plots, snapshots, reproducibility,
   pipeline compat, knowledge, CLI, server errors, second model, comparisons,
   intrinsic importances, and SHAP background data
 

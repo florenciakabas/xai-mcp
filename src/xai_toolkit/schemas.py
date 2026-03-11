@@ -298,6 +298,77 @@ class PredictionComparison(BaseModel):
     )
 
 
+# --- Drift detection schemas ---
+
+
+class DistributionSummary(BaseModel):
+    """Summary statistics of a feature's distribution.
+
+    Captures enough about a distribution to narrate meaningfully
+    without serializing raw data. Used for both reference and current
+    distributions in drift results.
+    """
+
+    mean: float
+    std: float
+    median: float
+    min: float
+    max: float
+    n_samples: int = Field(gt=0)
+    quantile_25: float
+    quantile_75: float
+
+
+class FeatureDriftResult(BaseModel):
+    """Per-feature drift detection result.
+
+    For numeric features, test_name is "psi" (primary) or "ks" (fallback
+    when PSI cannot be computed due to low cardinality). p_value always
+    holds the KS test p-value as supporting evidence.
+
+    For categorical features, test_name is "chi_squared" and p_value
+    holds the chi-squared p-value.
+
+    Severity thresholds:
+      PSI: <0.1 none, 0.1–0.25 moderate, ≥0.25 severe
+      KS fallback: p≥0.05 none, 0.01≤p<0.05 moderate, p<0.01 severe
+      Chi-squared: p≥0.05 none, 0.01≤p<0.05 moderate, p<0.01 severe
+    """
+
+    feature_name: str
+    test_name: Literal["ks", "psi", "chi_squared"]
+    statistic: float = Field(ge=0.0)
+    p_value: float | None = Field(default=None, ge=0.0, le=1.0)
+    drift_detected: bool
+    severity: Literal["none", "moderate", "severe"]
+    reference_summary: DistributionSummary
+    current_summary: DistributionSummary
+
+
+class DatasetDriftResult(BaseModel):
+    """Aggregate drift detection across all features in a dataset.
+
+    The origin field records where the drift results came from:
+      - "on_the_fly": computed by this toolkit from raw data.
+      - "external": pre-computed by an external system (e.g., Evidently,
+        Databricks monitoring) and fed into the toolkit for narration.
+    """
+
+    features: list[FeatureDriftResult]
+    n_features: int = Field(gt=0)
+    n_drifted: int = Field(ge=0)
+    share_drifted: float = Field(ge=0.0, le=1.0)
+    overall_severity: Literal["none", "moderate", "severe"]
+    origin: Literal["on_the_fly", "external"] = Field(
+        default="on_the_fly",
+        description=(
+            "How these drift results were produced. "
+            "'on_the_fly': computed by the toolkit from raw DataFrames. "
+            "'external': pre-computed by an external system and passed in."
+        ),
+    )
+
+
 # --- Knowledge / RAG schemas (ADR-009) ---
 
 

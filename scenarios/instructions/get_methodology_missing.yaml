@@ -1,0 +1,15 @@
+scenario: "Methodology tool handles missing SKILL.md gracefully"
+phase: instruction-serving
+
+given:
+  server_running: true
+  skill_file_exists: false
+
+when:
+  tool_called: "get_xai_methodology"
+
+then:
+  - response_is_error: true
+  - error_code: "UNKNOWN_ERROR"
+  - error_message_contains: "SKILL.md"
+  - suggestion_present: true

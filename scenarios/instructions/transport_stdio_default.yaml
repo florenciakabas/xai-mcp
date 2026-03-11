@@ -1,0 +1,12 @@
+scenario: "Server defaults to stdio transport"
+phase: configurable-transport
+
+given:
+  env_XAI_TRANSPORT: not_set
+
+when:
+  server_starts: true
+
+then:
+  - transport_mode: "stdio"
+  - no_http_listener: true

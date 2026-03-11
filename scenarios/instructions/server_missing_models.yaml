@@ -1,0 +1,13 @@
+scenario: "Server starts gracefully with missing model files"
+phase: factory-pattern
+
+given:
+  models_dir: "empty_directory"
+
+when:
+  init_server_called: true
+
+then:
+  - no_exception_raised: true
+  - registry_is_empty: true
+  - logger_warning_emitted: true
