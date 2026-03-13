@@ -12,8 +12,12 @@ dependencies = [
     "pandas",
     "numpy",
     "pydantic>=2.0",
-    "mcp[cli]",
     "joblib",
+    "fastapi>=0.115.12",
+    "mcp[cli]>=1.14.0",
+    "uvicorn>=0.34.2",
+    "databricks-sdk>=0.60.0",
+    "fastmcp>=2.12.5",
 ]
 
 [build-system]
@@ -36,12 +40,15 @@ dev = [
     "pytest-cov>=4.0",
     "syrupy>=5.1.0",
     "ruff>=0.15.2",
-    "mypy>=1.10",
+    "mypy>=1.17.0",
 ]
 
 # ---------------------------------------------------------------------------
 # Tool configuration
 # ---------------------------------------------------------------------------
+
+[tool.uv]
+constraint-dependencies = ["docutils<0.21"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

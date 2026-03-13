@@ -19,7 +19,15 @@ from unittest.mock import patch
 
 import pytest
 
-from xai_toolkit.cli import build_parser, cmd_context, cmd_explain, cmd_models, main
+from xai_toolkit.cli import (
+    build_parser,
+    cmd_context,
+    cmd_explain,
+    cmd_feature_drift,
+    cmd_models,
+    cmd_pdp,
+    main,
+)
 from xai_toolkit.knowledge import load_knowledge_base
 from xai_toolkit.registry import ModelRegistry
 
@@ -52,6 +60,14 @@ def knowledge_dir(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return kb_dir
+
+
+def _capture_cli_json(handler, args, dependency) -> dict:
+    """Run a CLI handler and parse its JSON output."""
+    buf = StringIO()
+    with patch("sys.stdout", buf):
+        handler(args, dependency)
+    return json.loads(buf.getvalue())
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +303,36 @@ class TestCrossAdapterParity:
 
         result = json.loads(buf.getvalue())
         assert result["provenance_label"] == "ai-interpreted"
+
+    def test_pdp_feature_not_found_matches_server_error_payload(
+        self, _registry: ModelRegistry
+    ) -> None:
+        from xai_toolkit.server import get_partial_dependence
+
+        args = build_parser().parse_args([
+            "pdp", "--model", "xgboost_breast_cancer", "--feature", "mean_radus",
+        ])
+        cli_output = _capture_cli_json(cmd_pdp, args, _registry)
+        server_output = get_partial_dependence(
+            model_id="xgboost_breast_cancer",
+            feature_name="mean_radus",
+            include_plot=False,
+        )
+
+        assert cli_output == server_output
+
+    def test_feature_drift_feature_not_found_matches_server_error_payload(
+        self, _registry: ModelRegistry
+    ) -> None:
+        from xai_toolkit.server import detect_feature_drift
+
+        args = build_parser().parse_args([
+            "feature-drift", "--model", "xgboost_breast_cancer", "--feature", "mean_radus",
+        ])
+        cli_output = _capture_cli_json(cmd_feature_drift, args, _registry)
+        server_output = detect_feature_drift(
+            model_id="xgboost_breast_cancer",
+            feature_name="mean_radus",
+        )
+
+        assert cli_output == server_output

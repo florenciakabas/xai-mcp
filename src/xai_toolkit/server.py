@@ -146,6 +146,29 @@ def _build_response(
     ).model_dump()
 
 
+def _build_instruction_response(
+    instruction_id: str,
+    title: str,
+    content: str,
+) -> dict:
+    """Build a ToolResponse for instruction-serving tools.
+
+    These tools expose curated reference content rather than model analysis,
+    but they still follow the same public success contract as other tools.
+    """
+    return _build_response(
+        narrative=content,
+        evidence={
+            "instruction_id": instruction_id,
+            "title": title,
+            "content_format": "markdown",
+        },
+        model_id="instructions",
+        model_type="reference",
+        source="on_the_fly",
+    )
+
+
 def _build_error(
     error_code: ErrorCode,
     message: str,
@@ -184,6 +207,38 @@ def _extract_suggestion(error_message: str) -> str | None:
     if match:
         return match.group(1)
     return None
+
+
+def _build_feature_not_found_error(
+    feature_name: str,
+    available: list[str],
+    error_message: str | None = None,
+) -> dict:
+    """Build a consistent FEATURE_NOT_FOUND payload.
+
+    When a pure function already produced the canonical error message, reuse it
+    and extract the closest-match hint. Otherwise compute the same message shape
+    locally for adapter-owned validation paths.
+    """
+    if error_message is None:
+        from difflib import get_close_matches
+
+        close = get_close_matches(feature_name, available, n=3, cutoff=0.4)
+        error_message = (
+            f"Feature '{feature_name}' not found. "
+            f"Did you mean: {close}? "
+            f"Available features: {available}"
+        )
+        suggestion = close[0] if close else None
+    else:
+        suggestion = _extract_suggestion(error_message)
+
+    return _build_error(
+        error_code=ErrorCode.FEATURE_NOT_FOUND,
+        message=error_message,
+        available=available,
+        suggestion=suggestion,
+    )
 
 
 def _require_model(model_id: str) -> RegisteredModel | dict:
@@ -444,13 +499,10 @@ def get_partial_dependence(
             feature_name=feature_name,
         )
     except ValueError as e:
-        error_str = str(e)
-        suggestion = _extract_suggestion(error_str)
-        return _build_error(
-            error_code=ErrorCode.FEATURE_NOT_FOUND,
-            message=error_str,
+        return _build_feature_not_found_error(
+            feature_name=feature_name,
             available=list(entry.X_test.columns),
-            suggestion=suggestion,
+            error_message=str(e),
         )
 
     narrative = narrate_partial_dependence(pdp_result)
@@ -677,19 +729,9 @@ def detect_feature_drift(model_id: str, feature_name: str) -> dict:
         )
 
     if feature_name not in entry.X_train.columns:
-        from difflib import get_close_matches
-
-        available = list(entry.X_train.columns)
-        close = get_close_matches(feature_name, available, n=3, cutoff=0.4)
-        return _build_error(
-            error_code=ErrorCode.FEATURE_NOT_FOUND,
-            message=(
-                f"Feature '{feature_name}' not found. "
-                f"Did you mean: {close}? "
-                f"Available features: {available}"
-            ),
-            available=available,
-            suggestion=close[0] if close else None,
+        return _build_feature_not_found_error(
+            feature_name=feature_name,
+            available=list(entry.X_train.columns),
         )
 
     drift_result = compute_feature_drift(
@@ -769,7 +811,7 @@ def retrieve_business_context(
 
 
 @mcp.tool()
-def get_xai_methodology() -> str:
+def get_xai_methodology() -> dict:
     """Retrieve the XAI analysis methodology guide.
 
     Call this BEFORE starting any model explanation to understand the correct
@@ -777,7 +819,11 @@ def get_xai_methodology() -> str:
     to avoid. Returns the full workflow guide.
     """
     try:
-        return get_methodology_content(ROOT)
+        return _build_instruction_response(
+            instruction_id="xai_methodology",
+            title="XAI Methodology",
+            content=get_methodology_content(ROOT),
+        )
     except FileNotFoundError:
         return _build_error(
             error_code=ErrorCode.UNKNOWN_ERROR,
@@ -791,13 +837,17 @@ def get_xai_methodology() -> str:
 
 
 @mcp.tool()
-def get_glass_floor() -> str:
+def get_glass_floor() -> dict:
     """Retrieve the Glass Floor separation principles for presenting model explanations alongside business context.
 
     Call this when you need to present both deterministic model outputs and
     AI-interpreted business guidance. Returns the two-layer separation protocol.
     """
-    return get_glass_floor_principles()
+    return _build_instruction_response(
+        instruction_id="glass_floor",
+        title="Glass Floor Protocol",
+        content=get_glass_floor_principles(),
+    )
 
 
 # --- MCP Prompts ---

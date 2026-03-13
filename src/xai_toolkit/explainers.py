@@ -41,6 +41,149 @@ from xai_toolkit.schemas import (
 )
 
 
+def _validate_binary_target_names(target_names: list[str]) -> None:
+    """Require exactly two target names for the supported binary contract."""
+    if len(target_names) != 2:
+        raise ValueError(
+            "Only binary classification is supported. "
+            f"Expected exactly 2 target_names, got {len(target_names)}."
+        )
+
+
+def _validate_numeric_columns(X: pd.DataFrame, name: str) -> None:
+    """Require all columns to be numeric for SHAP and JSON serialization."""
+    non_numeric = [
+        col for col in X.columns
+        if not pd.api.types.is_numeric_dtype(X[col])
+    ]
+    if non_numeric:
+        raise ValueError(
+            f"Only numeric feature matrices are supported. "
+            f"{name} has non-numeric columns: {non_numeric}."
+        )
+
+
+def _validate_background_data(
+    X: pd.DataFrame,
+    background_data: pd.DataFrame | None,
+) -> None:
+    """Ensure background data matches the explained matrix exactly."""
+    _validate_numeric_columns(X, "X")
+    if background_data is None:
+        return
+    if background_data.empty:
+        raise ValueError("background_data must contain at least 1 row.")
+    if list(background_data.columns) != list(X.columns):
+        raise ValueError(
+            "background_data columns must exactly match X columns in the same order."
+        )
+    _validate_numeric_columns(background_data, "background_data")
+
+
+def _validate_binary_prediction(prediction: object) -> int:
+    """Require predictions to be numeric binary labels 0/1."""
+    if not isinstance(prediction, (int, np.integer, bool, np.bool_)):
+        raise ValueError(
+            "Only binary classifiers with numeric class labels 0 and 1 are supported."
+        )
+    prediction_int = int(prediction)
+    if prediction_int not in (0, 1):
+        raise ValueError(
+            "Only binary classifiers with numeric class labels 0 and 1 are supported."
+        )
+    return prediction_int
+
+
+def _validate_binary_probabilities(probabilities: object) -> np.ndarray:
+    """Require predict_proba outputs with shape (n_samples, 2)."""
+    probabilities_array = np.asarray(probabilities)
+    if probabilities_array.ndim != 2 or probabilities_array.shape[1] != 2:
+        raise ValueError(
+            "Only binary classifiers with predict_proba output shape "
+            "(n_samples, 2) are supported."
+        )
+    return probabilities_array
+
+
+def _extract_local_binary_shap_values(shap_explanation: object, n_features: int) -> np.ndarray:
+    """Extract per-feature SHAP values for the supported binary contract."""
+    shap_values = np.asarray(shap_explanation.values)
+    if shap_values.ndim == 3:
+        if shap_values.shape[2] != 2:
+            raise ValueError(
+                "Only binary SHAP outputs with 2 class dimensions are supported."
+            )
+        sample_values = shap_values[0, :, 1]
+    elif shap_values.ndim == 2:
+        sample_values = shap_values[0]
+    else:
+        raise ValueError(
+            "Unsupported SHAP output shape. "
+            "Expected 2D or 3D SHAP values for binary classification."
+        )
+    if len(sample_values) != n_features:
+        raise ValueError(
+            "SHAP output width does not match the explained feature matrix."
+        )
+    return sample_values
+
+
+def _extract_local_binary_base_value(shap_explanation: object) -> float:
+    """Extract the base value for the supported binary contract."""
+    base_values = np.asarray(shap_explanation.base_values)
+    if base_values.ndim == 0:
+        return float(base_values)
+    if base_values.ndim == 1:
+        if len(base_values) == 1:
+            return float(base_values[0])
+        if len(base_values) == 2:
+            return float(base_values[1])
+    if base_values.ndim == 2:
+        if base_values.shape[1] == 1:
+            return float(base_values[0, 0])
+        if base_values.shape[1] == 2:
+            return float(base_values[0, 1])
+    raise ValueError(
+        "Unsupported SHAP base_values shape for binary classification."
+    )
+
+
+def _extract_global_binary_shap_values(shap_explanation: object, n_features: int) -> np.ndarray:
+    """Extract global SHAP values for the supported binary contract."""
+    shap_values = np.asarray(shap_explanation.values)
+    if shap_values.ndim == 3:
+        if shap_values.shape[2] != 2:
+            raise ValueError(
+                "Only binary SHAP outputs with 2 class dimensions are supported."
+            )
+        shap_values = shap_values[:, :, 1]
+    elif shap_values.ndim != 2:
+        raise ValueError(
+            "Unsupported SHAP output shape. "
+            "Expected 2D or 3D SHAP values for binary classification."
+        )
+    if shap_values.shape[1] != n_features:
+        raise ValueError(
+            "SHAP output width does not match the explained feature matrix."
+        )
+    return shap_values
+
+
+def _require_pipeline_feature_names(metadata: dict) -> list[str]:
+    """Validate pipeline metadata contains a consistent feature list."""
+    feature_names = metadata.get("feature_names")
+    if not isinstance(feature_names, list) or not feature_names:
+        raise ValueError(
+            "Pipeline metadata must include a non-empty 'feature_names' list."
+        )
+    n_features = metadata.get("n_features")
+    if n_features is not None and int(n_features) != len(feature_names):
+        raise ValueError(
+            "Pipeline metadata 'n_features' does not match 'feature_names' length."
+        )
+    return feature_names
+
+
 def extract_intrinsic_importances(
     model: object,
     feature_names: list[str],
@@ -158,11 +301,14 @@ def compute_shap_values(
 
     if target_names is None:
         target_names = ["class_0", "class_1"]
+    _validate_binary_target_names(target_names)
+    _validate_background_data(X, background_data)
 
     # Get prediction for this sample
     sample = X.iloc[[sample_index]]
-    prediction = int(model.predict(sample)[0])
-    probability = float(model.predict_proba(sample)[0, 1])
+    prediction = _validate_binary_prediction(model.predict(sample)[0])
+    probabilities = _validate_binary_probabilities(model.predict_proba(sample))
+    probability = float(probabilities[0, 1])
     prediction_label = target_names[prediction]
 
     # Compute SHAP values. We pass model.predict_proba as a callable
@@ -185,17 +331,11 @@ def compute_shap_values(
     explainer = shap.Explainer(model.predict_proba, background)
     shap_explanation = explainer(X.iloc[[sample_index]])
 
-    # predict_proba returns shape (n_samples, n_classes), so SHAP values
-    # have shape (1, n_features, n_classes). Take positive class (index 1).
-    shap_vals = shap_explanation.values[0]
-    if shap_vals.ndim > 1:
-        shap_vals = shap_vals[:, 1]
-
-    base_value = shap_explanation.base_values[0]
-    if isinstance(base_value, (list, np.ndarray)):
-        base_value = float(base_value[1])  # positive class
-    else:
-        base_value = float(base_value)
+    shap_vals = _extract_local_binary_shap_values(
+        shap_explanation,
+        n_features=len(X.columns),
+    )
+    base_value = _extract_local_binary_base_value(shap_explanation)
 
     # Build feature name → SHAP value mapping
     feature_names = list(X.columns)
@@ -244,6 +384,8 @@ def compute_global_feature_importance(
         >>> importances[0].importance
         0.15
     """
+    _validate_background_data(X, background_data)
+    _validate_binary_probabilities(model.predict_proba(X.iloc[:1]))
     bg_source = background_data if background_data is not None else X
     background = bg_source.sample(n=min(50, len(bg_source)), random_state=42)
     logger.debug(
@@ -256,10 +398,10 @@ def compute_global_feature_importance(
     # Compute SHAP for all samples (this is the expensive call)
     shap_explanation = explainer(X)
 
-    # Shape: (n_samples, n_features, n_classes) — take positive class
-    shap_vals = shap_explanation.values
-    if shap_vals.ndim == 3:
-        shap_vals = shap_vals[:, :, 1]
+    shap_vals = _extract_global_binary_shap_values(
+        shap_explanation,
+        n_features=len(X.columns),
+    )
 
     # Mean absolute SHAP = global importance; mean signed SHAP = direction
     mean_abs = np.mean(np.abs(shap_vals), axis=0)
@@ -626,8 +768,8 @@ def _load_pipeline_metadata(artifacts_dir: Path) -> dict:
 def _load_pipeline_shap_values(artifacts_dir: Path, metadata: dict) -> np.ndarray:
     """Load the SHAP values array from pipeline artifacts.
 
-    Handles both single-output (one .npy file) and multi-output
-    (multiple class-specific .npy files) formats.
+    Supports only the current single-output contract:
+    one 2D `.npy` file with shape `(n_samples, n_features)`.
 
     Args:
         artifacts_dir: Directory containing pipeline output artifacts.
@@ -639,7 +781,17 @@ def _load_pipeline_shap_values(artifacts_dir: Path, metadata: dict) -> np.ndarra
     Raises:
         FileNotFoundError: If the SHAP values file doesn't exist.
     """
+    feature_names = _require_pipeline_feature_names(metadata)
     shap_paths = metadata.get("shap_saved_paths", ["shap_values.npy"])
+    if not isinstance(shap_paths, list) or not shap_paths:
+        raise ValueError(
+            "Pipeline metadata 'shap_saved_paths' must be a non-empty list."
+        )
+    if len(shap_paths) != 1:
+        raise ValueError(
+            "Only single-output SHAP artifacts are supported. "
+            f"Expected 1 path in 'shap_saved_paths', got {len(shap_paths)}."
+        )
     shap_filename = shap_paths[0]  # primary file
     shap_path = artifacts_dir / shap_filename
 
@@ -648,7 +800,16 @@ def _load_pipeline_shap_values(artifacts_dir: Path, metadata: dict) -> np.ndarra
             f"SHAP values file not found: {shap_path}. "
             f"Expected '{shap_filename}' in '{artifacts_dir}'."
         )
-    return np.load(shap_path)
+    shap_values = np.load(shap_path)
+    if shap_values.ndim != 2:
+        raise ValueError(
+            "Only 2D SHAP arrays with shape (n_samples, n_features) are supported."
+        )
+    if shap_values.shape[1] != len(feature_names):
+        raise ValueError(
+            "SHAP array width does not match pipeline metadata feature_names."
+        )
+    return shap_values
 
 
 def load_shap_from_pipeline(
@@ -694,7 +855,7 @@ def load_shap_from_pipeline(
     # Load metadata and SHAP values
     metadata = _load_pipeline_metadata(artifacts_dir)
     shap_values = _load_pipeline_shap_values(artifacts_dir, metadata)
-    feature_names = metadata["feature_names"]
+    feature_names = _require_pipeline_feature_names(metadata)
 
     # Validate sample index
     n_samples = shap_values.shape[0]
@@ -713,15 +874,24 @@ def load_shap_from_pipeline(
     }
 
     # Load base value (expected value)
-    ev_path = artifacts_dir / "shap_expected_value.npy"
+    ev_filename = metadata.get("expected_value_saved", "shap_expected_value.npy")
+    ev_path = artifacts_dir / ev_filename
     if ev_path.exists():
         expected_values = np.load(ev_path)
         if expected_values.ndim == 0:
             base_value = float(expected_values)
-        elif len(expected_values) > sample_index:
+        elif expected_values.ndim == 1 and len(expected_values) == n_samples:
             base_value = float(expected_values[sample_index])
+        elif expected_values.ndim == 1 and len(expected_values) == 1:
+            base_value = float(expected_values[0])
         else:
-            base_value = float(np.mean(expected_values))
+            raise ValueError(
+                "Only scalar or per-sample 1D expected value arrays are supported."
+            )
+    elif "expected_value_saved" in metadata:
+        raise FileNotFoundError(
+            f"Expected value file not found: {ev_path}."
+        )
     else:
         base_value = 0.0
 
@@ -772,7 +942,7 @@ def load_global_importance_from_pipeline(
     # Load metadata and SHAP values
     metadata = _load_pipeline_metadata(artifacts_dir)
     shap_values = _load_pipeline_shap_values(artifacts_dir, metadata)
-    feature_names = metadata["feature_names"]
+    feature_names = _require_pipeline_feature_names(metadata)
 
     # Same aggregation as compute_global_feature_importance:
     # importance = mean(|SHAP|), direction = sign(mean(SHAP))

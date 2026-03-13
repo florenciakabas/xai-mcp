@@ -8,6 +8,7 @@ Covers:
 
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 
 from xai_toolkit.instructions import get_glass_floor_principles, get_methodology_content
 
@@ -86,17 +87,32 @@ class TestGetGlassFloorPrinciples:
 
 class TestServerTools:
 
-    def test_get_xai_methodology_returns_content(self):
+    def test_get_xai_methodology_returns_tool_response(self):
         from xai_toolkit.server import get_xai_methodology
 
         result = get_xai_methodology()
-        assert isinstance(result, str)
-        assert "Explanation Funnel" in result
+        assert result["metadata"]["model_id"] == "instructions"
+        assert result["metadata"]["model_type"] == "reference"
+        assert result["evidence"]["instruction_id"] == "xai_methodology"
+        assert result["evidence"]["content_format"] == "markdown"
+        assert "Explanation Funnel" in result["narrative"]
 
-    def test_get_glass_floor_returns_content(self):
+    def test_get_glass_floor_returns_tool_response(self):
         from xai_toolkit.server import get_glass_floor
 
         result = get_glass_floor()
-        assert isinstance(result, str)
-        assert "Layer 1" in result
-        assert "Layer 2" in result
+        assert result["metadata"]["model_id"] == "instructions"
+        assert result["metadata"]["model_type"] == "reference"
+        assert result["evidence"]["instruction_id"] == "glass_floor"
+        assert result["evidence"]["content_format"] == "markdown"
+        assert "Layer 1" in result["narrative"]
+        assert "Layer 2" in result["narrative"]
+
+    def test_get_xai_methodology_missing_file_returns_error_response(self):
+        from xai_toolkit.server import get_xai_methodology
+
+        with patch("xai_toolkit.server.get_methodology_content", side_effect=FileNotFoundError):
+            result = get_xai_methodology()
+
+        assert result["error_code"] == "UNKNOWN_ERROR"
+        assert "SKILL.md not found" in result["message"]

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -120,6 +121,41 @@ def _build_error(
         available=available or [],
         suggestion=suggestion,
     ).model_dump()
+
+
+def _extract_suggestion(error_message: str) -> str | None:
+    """Extract the closest-match suggestion from a feature lookup error."""
+    match = re.search(r"Did you mean: \['([^']+)'", error_message)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _build_feature_not_found_error(
+    feature_name: str,
+    available: list[str],
+    error_message: str | None = None,
+) -> dict:
+    """Build a FEATURE_NOT_FOUND payload matching the MCP adapter."""
+    if error_message is None:
+        from difflib import get_close_matches
+
+        close = get_close_matches(feature_name, available, n=3, cutoff=0.4)
+        error_message = (
+            f"Feature '{feature_name}' not found. "
+            f"Did you mean: {close}? "
+            f"Available features: {available}"
+        )
+        suggestion = close[0] if close else None
+    else:
+        suggestion = _extract_suggestion(error_message)
+
+    return _build_error(
+        "FEATURE_NOT_FOUND",
+        error_message,
+        available,
+        suggestion=suggestion,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +339,11 @@ def cmd_pdp(args: argparse.Namespace, registry: ModelRegistry) -> None:
             model=entry.model, X=entry.X_test, feature_name=args.feature,
         )
     except ValueError as e:
-        _output(_build_error("FEATURE_NOT_FOUND", str(e), list(entry.X_test.columns)))
+        _output(_build_feature_not_found_error(
+            feature_name=args.feature,
+            available=list(entry.X_test.columns),
+            error_message=str(e),
+        ))
         return
 
     narrative = narrate_partial_dependence(pdp_result)
@@ -420,7 +460,10 @@ def cmd_feature_drift(args: argparse.Namespace, registry: ModelRegistry) -> None
         return
 
     if args.feature not in entry.X_train.columns:
-        _output(_build_error("FEATURE_NOT_FOUND", f"Feature '{args.feature}' not found.", list(entry.X_train.columns)))
+        _output(_build_feature_not_found_error(
+            feature_name=args.feature,
+            available=list(entry.X_train.columns),
+        ))
         return
 
     drift_result = compute_feature_drift(

@@ -136,6 +136,43 @@ class TestLoadShapFromPipeline:
         with pytest.raises(FileNotFoundError, match="shap_values.npy"):
             load_shap_from_pipeline(tmp_path, sample_index=0)
 
+    def test_multiple_shap_paths_are_rejected(self, tmp_path):
+        """The narrowed contract supports only one SHAP value file."""
+        metadata = {
+            "feature_names": ["x"],
+            "n_features": 1,
+            "shap_saved_paths": ["class_0.npy", "class_1.npy"],
+        }
+        with open(tmp_path / "shap_metadata.json", "w") as f:
+            json.dump(metadata, f)
+        np.save(tmp_path / "class_0.npy", np.array([[0.1]]))
+        np.save(tmp_path / "class_1.npy", np.array([[0.2]]))
+
+        with pytest.raises(ValueError, match="Only single-output SHAP artifacts"):
+            load_shap_from_pipeline(tmp_path, sample_index=0)
+
+    def test_feature_name_width_mismatch_is_rejected(self, tmp_path):
+        """Feature count must agree between metadata and SHAP array width."""
+        metadata = {
+            "feature_names": ["x", "y"],
+            "n_features": 2,
+            "shap_saved_paths": ["shap_values.npy"],
+        }
+        with open(tmp_path / "shap_metadata.json", "w") as f:
+            json.dump(metadata, f)
+        np.save(tmp_path / "shap_values.npy", np.array([[0.1]]))
+
+        with pytest.raises(ValueError, match="SHAP array width does not match"):
+            load_shap_from_pipeline(tmp_path, sample_index=0)
+
+    def test_expected_value_shape_mismatch_is_rejected(self, pipeline_artifacts):
+        """Only scalar or per-sample expected value arrays are supported."""
+        artifacts_dir, _, _, _ = pipeline_artifacts
+        np.save(artifacts_dir / "shap_expected_value.npy", np.array([0.1, 0.2]))
+
+        with pytest.raises(ValueError, match="Only scalar or per-sample 1D expected value arrays are supported"):
+            load_shap_from_pipeline(artifacts_dir, sample_index=0)
+
     def test_prediction_fields_are_placeholder(self, pipeline_artifacts):
         """Pipeline artifacts don't include predictions; fields should be
         sensible defaults since we don't have the model at read time."""
@@ -212,4 +249,18 @@ class TestLoadGlobalImportanceFromPipeline:
         """Missing metadata file → FileNotFoundError."""
         np.save(tmp_path / "shap_values.npy", np.array([[0.1]]))
         with pytest.raises(FileNotFoundError, match="shap_metadata.json"):
+            load_global_importance_from_pipeline(tmp_path)
+
+    def test_multiple_shap_paths_are_rejected(self, tmp_path):
+        metadata = {
+            "feature_names": ["x"],
+            "n_features": 1,
+            "shap_saved_paths": ["class_0.npy", "class_1.npy"],
+        }
+        with open(tmp_path / "shap_metadata.json", "w") as f:
+            json.dump(metadata, f)
+        np.save(tmp_path / "class_0.npy", np.array([[0.1]]))
+        np.save(tmp_path / "class_1.npy", np.array([[0.2]]))
+
+        with pytest.raises(ValueError, match="Only single-output SHAP artifacts"):
             load_global_importance_from_pipeline(tmp_path)

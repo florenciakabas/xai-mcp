@@ -70,6 +70,56 @@ class ModelRegistry:
     def __init__(self) -> None:
         self._models: dict[str, RegisteredModel] = {}
 
+    @staticmethod
+    def _validate_supported_model(model: object, model_id: str) -> None:
+        """Require classifier-style models that fit the current explainer contract."""
+        if not isinstance(model, ClassifierProtocol):
+            raise ValueError(
+                f"Model '{model_id}' is unsupported. "
+                "Only classifiers with both predict() and predict_proba() are supported."
+            )
+        classes = getattr(model, "classes_", None)
+        if classes is not None and len(np.asarray(classes)) != 2:
+            raise ValueError(
+                f"Model '{model_id}' is unsupported. "
+                "Only binary classifiers are supported."
+            )
+
+    @staticmethod
+    def _validate_loaded_artifacts(
+        model_id: str,
+        metadata: dict,
+        X_test: pd.DataFrame,
+        y_test: pd.Series,
+        X_train: pd.DataFrame | None,
+    ) -> None:
+        """Validate the loaded metadata and tabular artifacts agree exactly."""
+        feature_names = metadata.get("feature_names")
+        if not isinstance(feature_names, list) or not feature_names:
+            raise ValueError(
+                f"Model '{model_id}' metadata must include a non-empty 'feature_names' list."
+            )
+        if list(X_test.columns) != feature_names:
+            raise ValueError(
+                f"Model '{model_id}' test data columns must exactly match metadata "
+                "feature_names in the same order."
+            )
+        if X_train is not None and list(X_train.columns) != feature_names:
+            raise ValueError(
+                f"Model '{model_id}' training data columns must exactly match metadata "
+                "feature_names in the same order."
+            )
+        if len(y_test) != len(X_test):
+            raise ValueError(
+                f"Model '{model_id}' test target length must match test feature rows."
+            )
+        target_names = metadata.get("target_names")
+        if target_names is not None and len(target_names) != 2:
+            raise ValueError(
+                f"Model '{model_id}' is unsupported. "
+                "Only binary classification metadata with exactly 2 target_names is supported."
+            )
+
     def load_from_disk(
         self,
         model_id: str,
@@ -94,6 +144,7 @@ class ModelRegistry:
         if not model_path.exists():
             raise FileNotFoundError(f"Model file not found: {model_path}")
         model = joblib.load(model_path)
+        self._validate_supported_model(model, model_id)
 
         # Load metadata
         meta_path = models_dir / f"{model_id}_meta.json"
@@ -117,6 +168,14 @@ class ModelRegistry:
             logger.info("Loaded training data for '%s' (%d samples)", model_id, len(X_train))
         else:
             logger.debug("No training data found at %s; SHAP will use test data as background.", train_path)
+
+        self._validate_loaded_artifacts(
+            model_id=model_id,
+            metadata=metadata,
+            X_test=X_test,
+            y_test=y_test,
+            X_train=X_train,
+        )
 
         # Detect model type using pipeline-compatible logic (Tamas's
         # _detect_model_type from the Kedro explainability pipeline).

@@ -47,6 +47,22 @@ def toy_data():
     return model, X_train, X_test, y_train, y_test
 
 
+@pytest.fixture()
+def multiclass_data():
+    """Create a simple multiclass dataset to verify the narrowed contract."""
+    from sklearn.datasets import load_iris
+
+    data = load_iris(as_frame=True)
+    X = data.data
+    y = data.target
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y,
+    )
+    model = RandomForestClassifier(n_estimators=10, random_state=42)
+    model.fit(X_train, y_train)
+    return model, X_train, X_test, y_train, y_test
+
+
 # ---------------------------------------------------------------------------
 # compute_shap_values background_data tests
 # ---------------------------------------------------------------------------
@@ -119,6 +135,29 @@ class TestShapBackgroundData:
             background_used = call_args[0][1]
             assert all(idx in X_test.index for idx in background_used.index)
 
+    def test_multiclass_model_is_rejected(self, multiclass_data) -> None:
+        """The current explainer contract is intentionally binary-only."""
+        model, X_train, X_test, _, _ = multiclass_data
+        with pytest.raises(ValueError, match="Only binary classifiers"):
+            compute_shap_values(
+                model=model,
+                X=X_test,
+                sample_index=0,
+                background_data=X_train,
+            )
+
+    def test_background_column_mismatch_is_rejected(self, toy_data) -> None:
+        """Background data must match the explained feature schema exactly."""
+        model, X_train, X_test, _, _ = toy_data
+        mismatched_background = X_train[["b", "a", "c", "d"]]
+        with pytest.raises(ValueError, match="background_data columns must exactly match"):
+            compute_shap_values(
+                model=model,
+                X=X_test,
+                sample_index=0,
+                background_data=mismatched_background,
+            )
+
 
 # ---------------------------------------------------------------------------
 # compute_global_feature_importance background_data tests
@@ -144,6 +183,15 @@ class TestGlobalImportanceBackgroundData:
             background_data=None,
         )
         assert len(result) == 4
+
+    def test_multiclass_model_is_rejected(self, multiclass_data) -> None:
+        model, X_train, X_test, _, _ = multiclass_data
+        with pytest.raises(ValueError, match="Only binary classifiers"):
+            compute_global_feature_importance(
+                model=model,
+                X=X_test,
+                background_data=X_train,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +240,12 @@ class TestRegistryXTrain:
         X.to_csv(data_dir / "test_test_X.csv", index=False)
         y.to_csv(data_dir / "test_test_y.csv", index=False)
 
-        meta = {"model_id": "test_model", "dataset_name": "test"}
+        meta = {
+            "model_id": "test_model",
+            "dataset_name": "test",
+            "feature_names": ["f1", "f2"],
+            "target_names": ["class_0", "class_1"],
+        }
         with open(models_dir / "test_model_meta.json", "w") as f:
             json.dump(meta, f)
 
@@ -200,3 +253,37 @@ class TestRegistryXTrain:
         registry.load_from_disk("test_model", models_dir, data_dir)
         entry = registry.get("test_model")
         assert entry.X_train is None
+
+    def test_registry_rejects_feature_name_mismatch(self, tmp_path) -> None:
+        """Loaded CSV columns must agree with metadata feature_names exactly."""
+        import json
+        import joblib
+
+        models_dir = tmp_path / "models"
+        data_dir = tmp_path / "data"
+        models_dir.mkdir()
+        data_dir.mkdir()
+
+        rng = np.random.RandomState(42)
+        X = pd.DataFrame(rng.randn(20, 2), columns=["f1", "f2"])
+        y = pd.Series((X["f1"] > 0).astype(int))
+
+        model = RandomForestClassifier(n_estimators=5, random_state=42)
+        model.fit(X, y)
+
+        joblib.dump(model, models_dir / "test_model.joblib")
+        X.to_csv(data_dir / "test_test_X.csv", index=False)
+        y.to_csv(data_dir / "test_test_y.csv", index=False)
+
+        meta = {
+            "model_id": "test_model",
+            "dataset_name": "test",
+            "feature_names": ["f2", "f1"],
+            "target_names": ["class_0", "class_1"],
+        }
+        with open(models_dir / "test_model_meta.json", "w") as f:
+            json.dump(meta, f)
+
+        registry = ModelRegistry()
+        with pytest.raises(ValueError, match="must exactly match metadata feature_names"):
+            registry.load_from_disk("test_model", models_dir, data_dir)
