@@ -620,7 +620,7 @@ def main() -> None:
         cmd_context(args, kb)
     elif args.command in _REGISTRY_COMMANDS:
         registry = ModelRegistry()
-        for model_id in ("xgboost_breast_cancer", "rf_breast_cancer"):
+        for model_id in ("xgboost_breast_cancer", "rf_breast_cancer", "lgbm_lubricant_quality"):
             try:
                 registry.load_from_disk(model_id, MODELS_DIR, DATA_DIR)
             except FileNotFoundError:

@@ -1,0 +1,26 @@
+{
+  "model_id": "lgbm_lubricant_quality",
+  "model_type": "LGBMClassifier",
+  "dataset_name": "lubricant_quality",
+  "feature_names": [
+    "viscosity_40c",
+    "viscosity_100c",
+    "total_acid_number",
+    "water_content_ppm",
+    "flash_point_c",
+    "oxidation_stability",
+    "particle_count_4um",
+    "iron_ppm",
+    "copper_ppm",
+    "foam_tendency_ml",
+    "color_astm",
+    "demulsibility_min"
+  ],
+  "target_names": [
+    "in_spec",
+    "degraded"
+  ],
+  "n_train_samples": 500,
+  "n_test_samples": 150,
+  "accuracy": 1.0
+}

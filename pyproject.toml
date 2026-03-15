@@ -12,12 +12,19 @@ dependencies = [
     "pandas",
     "numpy",
     "pydantic>=2.0",
+    "lightgbm",
     "joblib",
     "fastapi>=0.115.12",
     "mcp[cli]>=1.14.0",
     "uvicorn>=0.34.2",
     "databricks-sdk>=0.60.0",
     "fastmcp>=2.12.5",
+    "pyarrow>=23.0.1",
+]
+
+[project.optional-dependencies]
+kedro = [
+    "kedro>=0.19",
 ]
 
 [build-system]
@@ -53,6 +60,10 @@ constraint-dependencies = ["docutils<0.21"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-ra"
+markers = [
+    "slow: expensive integration-style tests excluded from default local runs",
+]
 
 [tool.ruff]
 target-version = "py311"

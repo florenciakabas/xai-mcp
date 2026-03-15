@@ -201,6 +201,57 @@ class ModelRegistry:
             len(X_train) if X_train is not None else "N/A",
         )
 
+    def register_in_memory(
+        self,
+        model_id: str,
+        model: object,
+        metadata: dict,
+        X_test: pd.DataFrame,
+        y_test: pd.Series,
+        X_train: pd.DataFrame | None = None,
+    ) -> None:
+        """Register a model directly from memory (no disk I/O).
+
+        Use this when a pipeline has just trained or loaded a model and
+        wants to register it without saving/loading files.
+
+        Args:
+            model_id: Unique identifier for this model.
+            model: A fitted model satisfying ClassifierProtocol.
+            metadata: Dict with at least 'feature_names' and optionally
+                'target_names', 'model_type', 'accuracy', etc.
+            X_test: Test feature matrix.
+            y_test: Test target series.
+            X_train: Optional training data for SHAP background.
+        """
+        self._validate_supported_model(model, model_id)
+        self._validate_loaded_artifacts(
+            model_id=model_id,
+            metadata=metadata,
+            X_test=X_test,
+            y_test=y_test,
+            X_train=X_train,
+        )
+
+        detected_type = detect_model_type(model)
+        metadata = {**metadata, "detected_type": detected_type}
+
+        self._models[model_id] = RegisteredModel(
+            model_id=model_id,
+            model=model,
+            metadata=metadata,
+            X_test=X_test,
+            y_test=y_test,
+            X_train=X_train,
+        )
+        logger.info(
+            "Registered model '%s' in-memory (type=%s, detected=%s, features=%d)",
+            model_id,
+            metadata.get("model_type", "unknown"),
+            detected_type,
+            len(X_test.columns),
+        )
+
     def get(self, model_id: str) -> RegisteredModel:
         """Retrieve a registered model by ID.
 

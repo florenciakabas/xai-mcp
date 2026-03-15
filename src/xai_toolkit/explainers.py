@@ -216,11 +216,11 @@ def extract_intrinsic_importances(
     if hasattr(model, "coef_"):
         importance_array = np.asarray(getattr(model, "coef_")).flatten()
         source_attr = "coef_"
-        logger.info("Extracted coefficients from intrinsically explainable model.")
+        logger.debug("Extracted coefficients from intrinsically explainable model.")
     elif hasattr(model, "feature_importances_"):
         importance_array = np.asarray(getattr(model, "feature_importances_"))
         source_attr = "feature_importances_"
-        logger.info("Extracted feature importances from intrinsically explainable model.")
+        logger.debug("Extracted feature importances from intrinsically explainable model.")
 
     if importance_array is None:
         logger.debug("Model is not intrinsically explainable (no coef_ or feature_importances_).")
@@ -355,6 +355,100 @@ def compute_shap_values(
         feature_values=feature_value_dict,
         feature_names=feature_names,
     )
+
+
+def compute_shap_values_batch(
+    model,
+    X: pd.DataFrame,
+    sample_indices: list[int],
+    target_names: list[str] | None = None,
+    background_data: pd.DataFrame | None = None,
+) -> list[ShapResult]:
+    """Compute SHAP values for multiple samples with explainer reuse.
+
+    Creates the SHAP explainer once and loops over sampled indices.
+    Per-sample errors are caught, logged, and skipped — the caller
+    receives only successful results.
+
+    Args:
+        model: A fitted model with predict_proba().
+        X: Feature matrix (all rows available for explanation).
+        sample_indices: Which rows in X to explain.
+        target_names: Human-readable class names.
+        background_data: Optional training data for SHAP background.
+
+    Returns:
+        List of ShapResult for successful samples. May be shorter than
+        sample_indices if some samples failed.
+
+    Raises:
+        IndexError: If any index is out of range (validated upfront).
+    """
+    if target_names is None:
+        target_names = ["class_0", "class_1"]
+    _validate_binary_target_names(target_names)
+    _validate_background_data(X, background_data)
+
+    # Validate all indices upfront
+    n_rows = len(X)
+    for idx in sample_indices:
+        if idx < 0 or idx >= n_rows:
+            raise IndexError(
+                f"Sample index {idx} is out of range. "
+                f"Dataset has {n_rows} samples (valid indices: 0–{n_rows - 1})."
+            )
+
+    # Create explainer once
+    bg_source = background_data if background_data is not None else X
+    background = bg_source.sample(n=min(50, len(bg_source)), random_state=42)
+    explainer = shap.Explainer(model.predict_proba, background)
+
+    feature_names = list(X.columns)
+    results: list[ShapResult] = []
+
+    for idx in sample_indices:
+        try:
+            sample = X.iloc[[idx]]
+            prediction = _validate_binary_prediction(model.predict(sample)[0])
+            probabilities = _validate_binary_probabilities(model.predict_proba(sample))
+            probability = float(probabilities[0, 1])
+            prediction_label = target_names[prediction]
+
+            shap_explanation = explainer(sample)
+            shap_vals = _extract_local_binary_shap_values(
+                shap_explanation, n_features=len(feature_names),
+            )
+            base_value = _extract_local_binary_base_value(shap_explanation)
+
+            shap_dict = {
+                name: round(float(val), 6)
+                for name, val in zip(feature_names, shap_vals)
+            }
+            feature_value_dict = {
+                name: round(float(sample[name].iloc[0]), 6)
+                for name in feature_names
+            }
+
+            results.append(ShapResult(
+                prediction=prediction,
+                prediction_label=prediction_label,
+                probability=round(probability, 4),
+                base_value=round(base_value, 6),
+                shap_values=shap_dict,
+                feature_values=feature_value_dict,
+                feature_names=feature_names,
+            ))
+        except Exception:
+            logger.warning(
+                "SHAP computation failed for sample %d, skipping.", idx,
+                exc_info=True,
+            )
+
+    logger.info(
+        "Batch SHAP: %d/%d samples succeeded.",
+        len(results), len(sample_indices),
+    )
+    return results
 
 
 def compute_global_feature_importance(

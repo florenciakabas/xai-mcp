@@ -137,12 +137,20 @@ class ToolMetadata(BaseModel):
             "64 hex characters."
         ),
     )
-    source: Literal["on_the_fly", "pipeline"] = Field(
+    source: Literal["on_the_fly", "pipeline", "precomputed"] = Field(
         default="on_the_fly",
         description=(
             "How this explanation was generated. "
             "'on_the_fly': computed in real-time from model + data (PoC). "
-            "'pipeline': read from pre-computed Kedro pipeline artifacts (production)."
+            "'pipeline': read from pre-computed Kedro pipeline artifacts (production). "
+            "'precomputed': retrieved from the result store (batch pipeline output)."
+        ),
+    )
+    batch_run_id: str | None = Field(
+        default=None,
+        description=(
+            "Identifier of the batch pipeline run that produced this result. "
+            "Populated when source='precomputed'; None for on-the-fly."
         ),
     )
     detected_type: str | None = Field(
@@ -166,6 +174,42 @@ class ToolMetadata(BaseModel):
         description=(
             "Number of samples the pipeline computed SHAP for. "
             "Populated when source='pipeline'; None for on-the-fly."
+        ),
+    )
+    run_id: str | None = Field(
+        default=None,
+        description=(
+            "Resolved run identifier used for retrieval-first responses. "
+            "Typically equals batch_run_id when source='precomputed'."
+        ),
+    )
+    resolved_run_strategy: str = Field(
+        default="not_applicable",
+        description=(
+            "How run_id was resolved. "
+            "Examples: 'latest_successful_by_computed_at', "
+            "'explicit_run_id', 'not_applicable'."
+        ),
+    )
+    provenance: Literal["precomputed", "on_the_fly", "pipeline", "unknown"] = Field(
+        default="on_the_fly",
+        description=(
+            "User-facing provenance label for trust/audit. "
+            "Mirrors the computation path."
+        ),
+    )
+    data_source: str = Field(
+        default="model_registry",
+        description=(
+            "Primary source backing the answer. "
+            "Examples: 'model_registry', 'result_store', 'pipeline_artifacts'."
+        ),
+    )
+    applied_skills: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Skills applied while producing this response. "
+            "Each entry contains {'id': <skill_id>, 'version': <version>}."
         ),
     )
 
@@ -367,6 +411,56 @@ class DatasetDriftResult(BaseModel):
             "'external': pre-computed by an external system and passed in."
         ),
     )
+
+
+# --- Persisted result-store schemas ---
+
+
+class StoredExplanation(BaseModel):
+    """Persisted row-level explanation from a batch run."""
+
+    run_id: str
+    model_id: str
+    sample_index: int
+    prediction: int
+    prediction_label: str
+    probability: float
+    narrative: str
+    top_features: str = Field(description="JSON string of top feature entries.")
+    shap_values: str = Field(description="JSON string feature->SHAP mapping.")
+    feature_values: str = Field(description="JSON string feature->value mapping.")
+    data_hash: str
+    computed_at: str
+
+
+class StoredDriftResult(BaseModel):
+    """Persisted per-feature drift result from a batch run."""
+
+    run_id: str
+    model_id: str
+    feature_name: str
+    test_name: str
+    statistic: float
+    p_value: float | None = None
+    drift_detected: bool
+    severity: str
+    narrative: str
+    overall_narrative: str
+    overall_severity: str
+    computed_at: str
+
+
+class StoredModelSummary(BaseModel):
+    """Persisted global model summary row from a batch run."""
+
+    run_id: str
+    model_id: str
+    feature_name: str
+    importance: float
+    rank: int
+    narrative: str
+    model_type: str
+    computed_at: str
 
 
 # --- Knowledge / RAG schemas (ADR-009) ---

@@ -28,6 +28,7 @@ uv run python -m pytest -k "<keyword>" -v
 # Train models (only needed if models/ is empty)
 uv run python scripts/train_toy_model.py      # XGBoost
 uv run python scripts/train_rf_model.py       # RandomForest
+uv run python scripts/train_lubricant_model.py # LightGBM
 
 # Start the MCP server locally
 uv run python -m xai_toolkit.server
@@ -77,8 +78,22 @@ User question → server.py → explainers.py → narrators.py → response
 - **`cli.py`** — CLI adapter. Same pure functions as `server.py`, outputs
   JSON to stdout. Zero MCP dependency. For scripting, CI/CD, and
   environments where MCP servers are unavailable.
+- **`result_store.py`** — Persists explanation/drift results to JSON for
+  cross-session retrieval via `list_drift_alerts` / `list_explained_samples`.
+- **`store_queries.py`** — Query helpers for the result store (filtering,
+  sorting, aggregation).
+- **`store_briefing.py`** — Generates `standard_briefing` narratives from
+  stored results.
+- **`skill_registry.py`** — Discovers and serves `SKILL.md` files for the
+  `list_skills` / `get_skill` tools.
+- **`notebook_wrappers.py`** — Convenience wrappers for notebook workflows
+  (register_in_memory, one-call explain).
+- **`sampling.py`** — Smart sample selection (outliers, boundary cases,
+  high-SHAP samples) for batch explanation.
+- **`kedro_adapter/`** — Kedro pipeline nodes that wrap xai-toolkit pure
+  functions for integration with existing Kedro pipelines.
 
-## MCP Tools (13 total)
+## MCP Tools (18 total)
 
 | Tool | Question it answers | Plot |
 |---|---|---|
@@ -95,6 +110,11 @@ User question → server.py → explainers.py → narrators.py → response
 | `retrieve_business_context` | What should I do about this? (ADR-009) | — |
 | `get_xai_methodology` | How should I sequence my analysis? | — |
 | `get_glass_floor` | How do I separate model facts from business context? | — |
+| `list_drift_alerts` | Which features are currently drifting? | — |
+| `list_explained_samples` | What samples have been explained recently? | — |
+| `standard_briefing` | Give me a quick model health summary | — |
+| `list_skills` | What analysis skills are available? | — |
+| `get_skill` | Show me the details of a specific skill | — |
 
 ## Tool Output Contract
 
@@ -147,6 +167,14 @@ uv run python -m xai_toolkit.server
 # HTTP (Databricks Apps)
 XAI_TRANSPORT=http XAI_PORT=9000 uv run python -m xai_toolkit.server
 ```
+
+## Registered Models
+
+| Model ID | Framework | Domain |
+|---|---|---|
+| `xgboost_breast_cancer` | XGBoost | Breast cancer screening |
+| `rf_breast_cancer` | RandomForest | Breast cancer screening |
+| `lgbm_lubricant_quality` | LightGBM | Lubricant quality (O&G demo) |
 
 ## How to Add a New Model
 

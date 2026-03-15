@@ -95,6 +95,7 @@ class TestServerTools:
         assert result["metadata"]["model_type"] == "reference"
         assert result["evidence"]["instruction_id"] == "xai_methodology"
         assert result["evidence"]["content_format"] == "markdown"
+        assert result["metadata"]["applied_skills"][0]["id"] == "xai_methodology"
         assert "Explanation Funnel" in result["narrative"]
 
     def test_get_glass_floor_returns_tool_response(self):
@@ -105,14 +106,39 @@ class TestServerTools:
         assert result["metadata"]["model_type"] == "reference"
         assert result["evidence"]["instruction_id"] == "glass_floor"
         assert result["evidence"]["content_format"] == "markdown"
+        assert result["metadata"]["applied_skills"][0]["id"] == "glass_floor"
         assert "Layer 1" in result["narrative"]
         assert "Layer 2" in result["narrative"]
 
     def test_get_xai_methodology_missing_file_returns_error_response(self):
         from xai_toolkit.server import get_xai_methodology
 
-        with patch("xai_toolkit.server.get_methodology_content", side_effect=FileNotFoundError):
+        with patch("xai_toolkit.server._skill_registry", None):
             result = get_xai_methodology()
 
         assert result["error_code"] == "UNKNOWN_ERROR"
-        assert "SKILL.md not found" in result["message"]
+        assert "Skill registry is not initialized" in result["message"]
+
+    def test_list_skills_returns_guardrails(self):
+        from xai_toolkit.server import list_skills
+
+        result = list_skills()
+        assert result["metadata"]["data_source"] == "skill_registry"
+        assert result["evidence"]["count"] >= 2
+        first = result["evidence"]["skills"][0]
+        assert "version" in first
+        assert "checksum" in first
+        assert "max_scope" in first
+
+    def test_get_skill_returns_applied_skill_metadata(self):
+        from xai_toolkit.server import get_skill
+
+        result = get_skill("glass_floor")
+        assert result["metadata"]["applied_skills"][0]["id"] == "glass_floor"
+        assert result["metadata"]["applied_skills"][0]["version"] == "1.0.0"
+
+    def test_get_skill_rejects_unknown_skill(self):
+        from xai_toolkit.server import get_skill
+
+        result = get_skill("unknown-skill")
+        assert result["error_code"] == "UNKNOWN_ERROR"

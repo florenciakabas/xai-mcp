@@ -19,7 +19,7 @@ from mcp.server.fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
-from xai_toolkit.instructions import get_glass_floor_principles, get_methodology_content
+from xai_toolkit.instructions import get_methodology_content
 from xai_toolkit.explainers import (
     compute_data_hash,
     compute_dataset_description,
@@ -48,11 +48,28 @@ from xai_toolkit.narrators import (
 from xai_toolkit.knowledge import load_knowledge_base, search_chunks
 from xai_toolkit.plots import plot_pdp_ice, plot_shap_bar, plot_shap_waterfall
 from xai_toolkit.registry import ModelRegistry, RegisteredModel
+from xai_toolkit.result_store import (
+    LATEST_RUN_STRATEGY,
+    load_drift_results as store_load_drift,
+    load_explanation as store_load_explanation,
+)
+from xai_toolkit.skill_registry import load_skill_registry, resolve_skill
+from xai_toolkit.store_briefing import (
+    build_drift_alerts_payload,
+    build_explained_samples_payload,
+    build_standard_briefing_payload,
+)
+from xai_toolkit.store_queries import (
+    discover_store_model_ids,
+    query_drift_results,
+    query_explanations,
+)
 from xai_toolkit.schemas import (
     ErrorCode,
     ErrorResponse,
     KnowledgeChunk,
     KnowledgeSearchResult,
+    ShapResult,
     ToolMetadata,
     ToolResponse,
 )
@@ -101,25 +118,31 @@ ROOT = Path(__file__).parent.parent.parent  # xai-mcp/
 MODELS_DIR = ROOT / "models"
 DATA_DIR = ROOT / "data"
 KNOWLEDGE_DIR = ROOT / "knowledge"
+STORE_DIR = ROOT / "result_store"
 
 registry = ModelRegistry()
 _knowledge_base: "KnowledgeBase | None" = None
+_store_path: Path | None = None
+_skill_registry: dict | None = None
 
 
 def init_server(
     models_dir: Path = MODELS_DIR,
     data_dir: Path = DATA_DIR,
     knowledge_dir: Path = KNOWLEDGE_DIR,
+    store_path: Path | None = None,
 ) -> None:
-    """Initialize models and knowledge base. Call before running server."""
-    global _knowledge_base
-    for model_id in ("xgboost_breast_cancer", "rf_breast_cancer"):
+    """Initialize models, knowledge base, and result store. Call before running server."""
+    global _knowledge_base, _store_path, _skill_registry
+    _store_path = store_path if store_path is not None else STORE_DIR
+    for model_id in ("xgboost_breast_cancer", "rf_breast_cancer", "lgbm_lubricant_quality"):
         try:
             registry.load_from_disk(model_id, models_dir, data_dir)
             logger.info("Loaded model: %s", model_id)
         except FileNotFoundError:
             logger.warning("Could not load model '%s' at startup.", model_id)
     _knowledge_base = load_knowledge_base(knowledge_dir)
+    _skill_registry = load_skill_registry(ROOT)
 
 
 # --- Response builders ---
@@ -134,6 +157,31 @@ def _build_response(
     **extra_metadata,
 ) -> dict:
     """Build a ToolResponse dict with consistent structure (ADR-005)."""
+    source = extra_metadata.get("source", "on_the_fly")
+    if "provenance" not in extra_metadata:
+        if source in {"precomputed", "pipeline", "on_the_fly"}:
+            extra_metadata["provenance"] = source
+        else:
+            extra_metadata["provenance"] = "unknown"
+
+    if "data_source" not in extra_metadata:
+        extra_metadata["data_source"] = {
+            "precomputed": "result_store",
+            "pipeline": "pipeline_artifacts",
+            "on_the_fly": "model_registry",
+        }.get(source, "unknown")
+
+    if "resolved_run_strategy" not in extra_metadata:
+        if source == "precomputed":
+            extra_metadata["resolved_run_strategy"] = LATEST_RUN_STRATEGY
+        else:
+            extra_metadata["resolved_run_strategy"] = "not_applicable"
+
+    if "run_id" not in extra_metadata and extra_metadata.get("batch_run_id") is not None:
+        extra_metadata["run_id"] = extra_metadata["batch_run_id"]
+
+    extra_metadata.setdefault("applied_skills", [])
+
     return ToolResponse(
         narrative=narrative,
         evidence=evidence,
@@ -166,6 +214,8 @@ def _build_instruction_response(
         model_id="instructions",
         model_type="reference",
         source="on_the_fly",
+        data_source="skill_registry",
+        applied_skills=[{"id": instruction_id, "version": "1.0.0"}],
     )
 
 
@@ -186,6 +236,38 @@ def _build_error(
         available=available or [],
         suggestion=suggestion,
     ).model_dump()
+
+
+def _record_skill_application(skill_id: str, version: str, checksum: str) -> None:
+    """Audit log for all skill applications."""
+    logger.info(
+        "Applied skill id=%s version=%s checksum=%s",
+        skill_id,
+        version,
+        checksum,
+    )
+
+
+def _get_skill_or_error(skill_id: str, version: str | None = None):
+    """Resolve skill from registry with guardrails and structured errors."""
+    if _skill_registry is None:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message="Skill registry is not initialized. Call init_server() first.",
+        )
+    try:
+        return resolve_skill(_skill_registry, skill_id=skill_id, version=version)
+    except ValueError as exc:
+        available = sorted(_skill_registry.keys())
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=str(exc),
+            available=available,
+        )
+
+
+def _is_error_payload(payload: object) -> bool:
+    return isinstance(payload, dict) and "error_code" in payload
 
 
 def _extract_suggestion(error_message: str) -> str | None:
@@ -266,6 +348,43 @@ def _require_model(model_id: str) -> RegisteredModel | dict:
         )
 
 
+# --- Result store helpers (retrieval-first) ---
+
+
+def _try_load_stored_explanation(model_id: str, sample_index: int):
+    """Try to load a precomputed explanation from the result store.
+
+    Returns StoredExplanation or None. Never raises.
+    """
+    if _store_path is None:
+        return None
+    try:
+        return store_load_explanation(model_id, sample_index, _store_path)
+    except Exception:
+        logger.warning(
+            "Result store unavailable for explanation lookup (model=%s, sample=%d).",
+            model_id, sample_index,
+        )
+        return None
+
+
+def _try_load_stored_drift(model_id: str, run_id: str | None = None):
+    """Try to load precomputed drift results from the result store.
+
+    Returns list of StoredDriftResult or empty list. Never raises.
+    """
+    if _store_path is None:
+        return []
+    try:
+        return store_load_drift(model_id, _store_path, run_id=run_id)
+    except Exception:
+        logger.warning(
+            "Result store unavailable for drift lookup (model=%s).",
+            model_id,
+        )
+        return []
+
+
 # --- MCP Tools ---
 
 
@@ -281,6 +400,9 @@ def explain_prediction(
     the model's prediction for the given sample, backed by SHAP values.
     Optionally includes a SHAP bar chart (tornado plot) visualization.
 
+    Checks the result store first for precomputed explanations.
+    Falls back to on-the-fly SHAP computation if not found.
+
     Args:
         model_id: ID of a registered model (e.g., "xgboost_breast_cancer").
         sample_index: Row index in the test dataset to explain (0-based).
@@ -290,6 +412,47 @@ def explain_prediction(
     if isinstance(entry, dict):
         return entry
 
+    # --- Retrieval-first: check result store ---
+    stored = _try_load_stored_explanation(model_id, sample_index)
+    if stored is not None:
+        try:
+            import json as _json
+
+            shap_values = _json.loads(stored.shap_values)
+            feature_values = _json.loads(stored.feature_values)
+            shap_result = ShapResult(
+                prediction=stored.prediction,
+                prediction_label=stored.prediction_label,
+                probability=stored.probability,
+                base_value=0.0,  # not stored separately
+                shap_values=shap_values,
+                feature_values=feature_values,
+                feature_names=list(shap_values.keys()),
+            )
+            plot_b64 = plot_shap_bar(shap_result, top_n=10) if include_plot else None
+            return _build_response(
+                narrative=stored.narrative,
+                evidence=shap_result.model_dump(),
+                model_id=model_id,
+                model_type=entry.metadata.get("model_type", "unknown"),
+                detected_type=entry.metadata.get("detected_type"),
+                sample_index=sample_index,
+                dataset_size=len(entry.X_test),
+                data_hash=stored.data_hash,
+                source="precomputed",
+                batch_run_id=stored.run_id,
+                plot_base64=plot_b64,
+            )
+        except Exception:
+            logger.warning(
+                "Stored explanation payload is malformed (model=%s, sample=%d); "
+                "falling back to on-the-fly computation.",
+                model_id,
+                sample_index,
+                exc_info=True,
+            )
+
+    # --- Fallback: compute on-the-fly ---
     try:
         shap_result = compute_shap_values(
             model=entry.model,
@@ -321,6 +484,7 @@ def explain_prediction(
         sample_index=sample_index,
         dataset_size=len(entry.X_test),
         data_hash=data_hash,
+        source="on_the_fly",
         plot_base64=plot_b64,
     )
 
@@ -665,9 +829,8 @@ def compare_predictions(
 def detect_drift(model_id: str) -> dict:
     """Detect data drift between a model's training data and test data.
 
-    Compares the reference (training) distribution against the current
-    (test) distribution for every feature. Returns an aggregate summary
-    of which features drifted, by how much, and overall severity.
+    Checks the result store first for precomputed drift results.
+    Falls back to on-the-fly computation if not found.
 
     Numeric features are tested with PSI (primary) and KS (supporting).
     Categorical features are tested with chi-squared.
@@ -679,6 +842,39 @@ def detect_drift(model_id: str) -> dict:
     if isinstance(entry, dict):
         return entry
 
+    # --- Retrieval-first: check result store ---
+    stored_drift = _try_load_stored_drift(model_id)
+    if stored_drift:
+        first = stored_drift[0]
+        narrative = first.overall_narrative
+        evidence = {
+            "features": [
+                {
+                    "feature_name": r.feature_name,
+                    "test_name": r.test_name,
+                    "statistic": r.statistic,
+                    "p_value": r.p_value,
+                    "drift_detected": r.drift_detected,
+                    "severity": r.severity,
+                    "narrative": r.narrative,
+                }
+                for r in stored_drift
+            ],
+            "n_features": len(stored_drift),
+            "n_drifted": sum(1 for r in stored_drift if r.drift_detected),
+            "overall_severity": first.overall_severity,
+        }
+        return _build_response(
+            narrative=narrative,
+            evidence=evidence,
+            model_id=model_id,
+            model_type=entry.metadata.get("model_type", "unknown"),
+            dataset_size=len(entry.X_test),
+            source="precomputed",
+            batch_run_id=first.run_id,
+        )
+
+    # --- Fallback: compute on-the-fly ---
     if entry.X_train is None:
         return _build_error(
             error_code=ErrorCode.UNKNOWN_ERROR,
@@ -700,6 +896,7 @@ def detect_drift(model_id: str) -> dict:
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
         dataset_size=len(entry.X_test),
+        source="on_the_fly",
     )
 
 
@@ -747,6 +944,166 @@ def detect_feature_drift(model_id: str, feature_name: str) -> dict:
         model_id=model_id,
         model_type=entry.metadata.get("model_type", "unknown"),
         dataset_size=len(entry.X_test),
+    )
+
+
+# --- Discovery tools (batch result browsing) ---
+
+
+@mcp.tool()
+def list_drift_alerts(
+    model_id: str | None = None,
+    severity: str | None = None,
+    run_id: str | None = None,
+) -> dict:
+    """Browse batch drift findings across features and models.
+
+    Returns precomputed drift results from the result store. This is a
+    discovery tool — it does NOT fall back to on-the-fly computation.
+
+    Args:
+        model_id: Filter to a specific model. If None, returns results
+            for all models with stored drift data.
+        severity: Filter by severity ("none", "moderate", "severe").
+        run_id: Filter to a specific batch run.
+    """
+    if _store_path is None:
+        return _build_response(
+            narrative="No result store configured.",
+            evidence={"alerts": []},
+            model_id=model_id or "all",
+            model_type="discovery",
+            source="precomputed",
+            resolved_run_strategy="explicit_run_id" if run_id else LATEST_RUN_STRATEGY,
+            run_id=run_id,
+        )
+
+    try:
+        all_results = query_drift_results(_store_path, model_id=model_id, run_id=run_id)
+    except Exception:
+        logger.warning("Could not query drift results from result store.", exc_info=True)
+        all_results = []
+    narrative, evidence = build_drift_alerts_payload(
+        all_results,
+        model_id=model_id,
+        severity=severity,
+    )
+
+    return _build_response(
+        narrative=narrative,
+        evidence=evidence,
+        model_id=model_id or "all",
+        model_type="discovery",
+        source="precomputed",
+        resolved_run_strategy="explicit_run_id" if run_id else LATEST_RUN_STRATEGY,
+        run_id=run_id,
+    )
+
+
+@mcp.tool()
+def list_explained_samples(
+    model_id: str,
+    run_id: str | None = None,
+) -> dict:
+    """Browse which samples have precomputed explanations.
+
+    Returns a summary of available precomputed explanations from the
+    result store. This is a discovery tool — it does NOT compute
+    explanations on the fly.
+
+    Args:
+        model_id: Model identifier.
+        run_id: Filter to a specific batch run.
+    """
+    if _store_path is None:
+        return _build_response(
+            narrative="No result store configured.",
+            evidence={"samples": []},
+            model_id=model_id,
+            model_type="discovery",
+            source="precomputed",
+            resolved_run_strategy="explicit_run_id" if run_id else LATEST_RUN_STRATEGY,
+            run_id=run_id,
+        )
+
+    try:
+        explanations = query_explanations(_store_path, model_id=model_id, run_id=run_id)
+    except Exception:
+        logger.warning("Could not load explanations for '%s'.", model_id)
+        explanations = []
+    narrative, evidence = build_explained_samples_payload(model_id, explanations)
+
+    return _build_response(
+        narrative=narrative,
+        evidence=evidence,
+        model_id=model_id,
+        model_type="discovery",
+        source="precomputed",
+        resolved_run_strategy="explicit_run_id" if run_id else LATEST_RUN_STRATEGY,
+        run_id=run_id,
+    )
+
+
+@mcp.tool()
+def standard_briefing(
+    model_id: str | None = None,
+    run_id: str | None = None,
+    top_cases: int = 5,
+) -> dict:
+    """Generate a concise, predefined briefing from persisted batch results.
+
+    This tool is retrieval-first and does not run SHAP/drift computations.
+    It is designed as a reusable daily/weekly briefing entry point for
+    stakeholders who ask a similar set of baseline questions each run.
+
+    Args:
+        model_id: Optional model filter. If None, includes all models with
+            persisted result-store artifacts.
+        run_id: Optional run filter.
+        top_cases: Maximum number of highlighted explained samples per model.
+    """
+    if top_cases < 1:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message="top_cases must be >= 1.",
+            available=["1-20"],
+        )
+    if _store_path is None:
+        return _build_response(
+            narrative="No result store configured. Standard briefing requires precomputed batch results.",
+            evidence={"models": [], "count_models": 0},
+            model_id=model_id or "all",
+            model_type="briefing",
+            source="precomputed",
+            resolved_run_strategy="explicit_run_id" if run_id else LATEST_RUN_STRATEGY,
+            run_id=run_id,
+        )
+
+    model_ids = [model_id] if model_id is not None else discover_store_model_ids(_store_path)
+    per_model_results: list[tuple[str, list, list]] = []
+    for mid in model_ids:
+        try:
+            explanations = query_explanations(_store_path, model_id=mid, run_id=run_id)
+        except Exception:
+            logger.warning("Could not load stored explanations for '%s'.", mid, exc_info=True)
+            explanations = []
+        drift_rows = _try_load_stored_drift(mid, run_id=run_id)
+        per_model_results.append((mid, explanations, drift_rows))
+    narrative, evidence = build_standard_briefing_payload(
+        per_model_results,
+        model_id=model_id,
+        run_id=run_id,
+        top_cases=top_cases,
+    )
+
+    return _build_response(
+        narrative=narrative,
+        evidence=evidence,
+        model_id=model_id or "all",
+        model_type="briefing",
+        source="precomputed",
+        resolved_run_strategy="explicit_run_id" if run_id else LATEST_RUN_STRATEGY,
+        run_id=run_id,
     )
 
 
@@ -818,22 +1175,57 @@ def get_xai_methodology() -> dict:
     tool sequence (explanation funnel), Glass Floor protocol, and anti-patterns
     to avoid. Returns the full workflow guide.
     """
-    try:
-        return _build_instruction_response(
-            instruction_id="xai_methodology",
-            title="XAI Methodology",
-            content=get_methodology_content(ROOT),
-        )
-    except FileNotFoundError:
+    skill = _get_skill_or_error("xai_methodology")
+    if _is_error_payload(skill):
+        return skill
+    _record_skill_application(skill["skill_id"], skill["version"], skill["checksum"])
+    return _build_response(
+        narrative=skill["content"],
+        evidence={
+            "instruction_id": skill["skill_id"],
+            "title": skill["title"],
+            "version": skill["version"],
+            "intent_tags": skill["intent_tags"],
+            "max_scope": skill["max_scope"],
+            "checksum": skill["checksum"],
+            "content_format": "markdown",
+        },
+        model_id="instructions",
+        model_type="reference",
+        source="on_the_fly",
+        data_source="skill_registry",
+        applied_skills=[{"id": skill["skill_id"], "version": skill["version"]}],
+    )
+
+
+@mcp.tool()
+def list_skills() -> dict:
+    """List available versioned context skills and guardrail metadata."""
+    if _skill_registry is None:
         return _build_error(
             error_code=ErrorCode.UNKNOWN_ERROR,
-            message=(
-                "SKILL.md not found at "
-                f"{ROOT / 'skills' / 'xai-workflow' / 'SKILL.md'}. "
-                "Ensure the skills/xai-workflow/ directory exists."
-            ),
-            suggestion="Check that the repository is complete and SKILL.md has not been removed.",
+            message="Skill registry is not initialized. Call init_server() first.",
         )
+    skills = [
+        {
+            "skill_id": skill["skill_id"],
+            "title": skill["title"],
+            "version": skill["version"],
+            "intent_tags": skill["intent_tags"],
+            "max_scope": skill["max_scope"],
+            "checksum": skill["checksum"],
+        }
+        for skill in sorted(_skill_registry.values(), key=lambda item: item["skill_id"])
+    ]
+    narrative = f"{len(skills)} skills available in the registry."
+    return _build_response(
+        narrative=narrative,
+        evidence={"skills": skills, "count": len(skills)},
+        model_id="skills",
+        model_type="registry",
+        source="on_the_fly",
+        data_source="skill_registry",
+    )
 
 
 @mcp.tool()
@@ -843,10 +1235,52 @@ def get_glass_floor() -> dict:
     Call this when you need to present both deterministic model outputs and
     AI-interpreted business guidance. Returns the two-layer separation protocol.
     """
-    return _build_instruction_response(
-        instruction_id="glass_floor",
-        title="Glass Floor Protocol",
-        content=get_glass_floor_principles(),
+    skill = _get_skill_or_error("glass_floor")
+    if _is_error_payload(skill):
+        return skill
+    _record_skill_application(skill["skill_id"], skill["version"], skill["checksum"])
+    return _build_response(
+        narrative=skill["content"],
+        evidence={
+            "instruction_id": skill["skill_id"],
+            "title": skill["title"],
+            "version": skill["version"],
+            "intent_tags": skill["intent_tags"],
+            "max_scope": skill["max_scope"],
+            "checksum": skill["checksum"],
+            "content_format": "markdown",
+        },
+        model_id="instructions",
+        model_type="reference",
+        source="on_the_fly",
+        data_source="skill_registry",
+        applied_skills=[{"id": skill["skill_id"], "version": skill["version"]}],
+    )
+
+
+@mcp.tool()
+def get_skill(skill_id: str, version: str | None = None) -> dict:
+    """Retrieve one skill by id/version with guardrails and checksum."""
+    skill = _get_skill_or_error(skill_id, version=version)
+    if _is_error_payload(skill):
+        return skill
+    _record_skill_application(skill["skill_id"], skill["version"], skill["checksum"])
+    return _build_response(
+        narrative=skill["content"],
+        evidence={
+            "skill_id": skill["skill_id"],
+            "title": skill["title"],
+            "version": skill["version"],
+            "intent_tags": skill["intent_tags"],
+            "max_scope": skill["max_scope"],
+            "checksum": skill["checksum"],
+            "content_format": "markdown",
+        },
+        model_id="skills",
+        model_type="registry",
+        source="on_the_fly",
+        data_source="skill_registry",
+        applied_skills=[{"id": skill["skill_id"], "version": skill["version"]}],
     )
 
 

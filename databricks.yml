@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=bundle_config_schema.json
+
+bundle:
+  name: "{{cookiecutter.project_name}}_${bundle.git.branch}"
+
+artifacts:
+  default:
+    type: whl
+    build: kedro package
+    path: .
+
+variables:
+  experiment_name:
+    description: Experiment name for the model training.
+    default: /Users/${workspace.current_user.userName}/${bundle.target}-{{ cookiecutter.project_name }}-experiment
+  model_registry_uri:
+    description: Model registry uri to log model into
+    default: databricks-uc
+  model_name:
+    description: Model name for the model training.
+    default: "{{ cookiecutter.project_name }}-model"
+  usecase_name:
+    description: UC table name for the usecase. This should correspond to the "schema" name given to the project in UC. Recommend that this is consistent with the code repo name(?)
+    default: "{{ cookiecutter.project_name }}"
+  catalog_name:
+    description: The catalog name to be use for creating tables on UC.
+
+sync:
+  include:
+    - conf/base/*.yml
+    - conf/base/*.gitkeep
+    - data/**/*.csv
+    - data/**/*.gitkeep
+  exclude:
+    - conf/local/**/*
+
+include:
+  - ./resources/default-pipeline-resource.yml
+  # Uncomment the following line to enable lakehouse monitoring
+
+# Deployment Target specific values for workspace
+targets:
+  development:
+    sync:
+      include:
+        - conf/dev/*.yml
+    default: true
+    variables:
+      catalog_name: "{{ cookiecutter.databricks_dev_catalog_name }}"
+    workspace:
+      host: "{{ cookiecutter.databricks_dev_workspace_host }}"
+
+  acceptance:
+    sync:
+      include:
+        - conf/acc/*.yml
+    variables:
+      catalog_name: "{{ cookiecutter.databricks_staging_catalog_name }}"
+    workspace:
+      host: "{{ cookiecutter.databricks_staging_workspace_host }}"
+
+  production:
+    sync:
+      include:
+        - conf/prod/*.yml
+    variables:
+      catalog_name: "{{ cookiecutter.databricks_prod_catalog_name }}"
+    workspace:
+      host: "{{ cookiecutter.databricks_prod_workspace_host }}"
