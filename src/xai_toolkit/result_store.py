@@ -10,6 +10,7 @@ but uses the same schemas. The MCP server reads via this module.
 """
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -61,6 +62,19 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _ensure_single_model_id(
+    results: Sequence[StoredExplanation | StoredDriftResult | StoredModelSummary],
+) -> str:
+    """Validate all rows belong to the same model partition."""
+    model_ids = {row.model_id for row in results}
+    if len(model_ids) != 1:
+        raise ValueError(
+            "All persisted rows must share the same model_id. "
+            f"Got: {sorted(model_ids)}"
+        )
+    return next(iter(model_ids))
+
+
 def save_explanations(
     results: list[StoredExplanation],
     store_path: str | Path,
@@ -77,7 +91,7 @@ def save_explanations(
         logger.warning("No explanations to save.")
         return store_path
 
-    model_id = results[0].model_id
+    model_id = _ensure_single_model_id(results)
     model_dir = store_path / model_id
     _ensure_dir(model_dir)
 
@@ -117,7 +131,7 @@ def save_drift_results(
         logger.warning("No drift results to save.")
         return store_path
 
-    model_id = results[0].model_id
+    model_id = _ensure_single_model_id(results)
     model_dir = store_path / model_id
     _ensure_dir(model_dir)
 
@@ -157,7 +171,7 @@ def save_model_summaries(
         logger.warning("No model summaries to save.")
         return store_path
 
-    model_id = results[0].model_id
+    model_id = _ensure_single_model_id(results)
     model_dir = store_path / model_id
     _ensure_dir(model_dir)
 

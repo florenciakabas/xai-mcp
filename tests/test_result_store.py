@@ -109,6 +109,18 @@ class TestSaveLoadExplanations:
         assert result.model_id == "model_b"
         assert result.sample_index == 2
 
+    def test_mixed_model_ids_raise_value_error(self, tmp_path):
+        """Mixed model batches should be rejected explicitly."""
+        mixed = [
+            _make_explanation(model_id="model_a", sample_index=0),
+            _make_explanation(model_id="model_b", sample_index=1),
+        ]
+        with pytest.raises(
+            ValueError,
+            match="must share the same model_id",
+        ):
+            save_explanations(mixed, tmp_path)
+
 
 class TestMultipleRuns:
     """S4.3 — Multiple runs coexist."""
@@ -203,6 +215,48 @@ class TestDriftStore:
     def test_drift_empty_store(self, tmp_path):
         result = load_drift_results("nonexistent", tmp_path)
         assert result == []
+
+    def test_drift_mixed_model_ids_raise_value_error(self, tmp_path):
+        mixed = [
+            _make_drift_result(model_id="model_a", feature_name="f1"),
+            _make_drift_result(model_id="model_b", feature_name="f2"),
+        ]
+        with pytest.raises(
+            ValueError,
+            match="must share the same model_id",
+        ):
+            save_drift_results(mixed, tmp_path)
+
+
+class TestModelSummaryStore:
+    def test_model_summary_mixed_model_ids_raise_value_error(self, tmp_path):
+        mixed = [
+            StoredModelSummary(
+                run_id="run-001",
+                model_id="model_a",
+                feature_name="f1",
+                importance=0.5,
+                rank=1,
+                narrative="Feature f1 is important.",
+                model_type="xgboost",
+                computed_at="2026-03-13T14:00:00Z",
+            ),
+            StoredModelSummary(
+                run_id="run-001",
+                model_id="model_b",
+                feature_name="f1",
+                importance=0.5,
+                rank=1,
+                narrative="Feature f1 is important.",
+                model_type="xgboost",
+                computed_at="2026-03-13T14:00:00Z",
+            ),
+        ]
+        with pytest.raises(
+            ValueError,
+            match="must share the same model_id",
+        ):
+            save_model_summaries(mixed, tmp_path)
 
 
 class TestStoredContractsSource:

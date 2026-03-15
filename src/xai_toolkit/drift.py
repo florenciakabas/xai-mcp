@@ -53,6 +53,9 @@ def compute_distribution_summary(series: pd.Series) -> DistributionSummary:
     Returns:
         DistributionSummary with mean, std, median, min, max, quartiles.
     """
+    if series.empty:
+        raise ValueError("Distribution summary requires at least one sample.")
+
     return DistributionSummary(
         mean=round(float(series.mean()), 6),
         std=round(float(series.std()), 6),
@@ -184,6 +187,14 @@ def detect_feature_drift(
         FeatureDriftResult with test results, severity, and distribution summaries.
     """
     ref_clean, cur_clean = _drop_nans(reference, current, feature_name)
+    if ref_clean.empty:
+        raise ValueError(
+            f"Feature '{feature_name}' has no usable reference samples after NaN filtering."
+        )
+    if cur_clean.empty:
+        raise ValueError(
+            f"Feature '{feature_name}' has no usable current samples after NaN filtering."
+        )
 
     is_numeric = pd.api.types.is_numeric_dtype(ref_clean)
 
@@ -321,6 +332,12 @@ def detect_drift(
     reverse_order = {0: "none", 1: "moderate", 2: "severe"}
     worst = max(severity_order[f.severity] for f in features) if features else 0
     overall_severity = reverse_order[worst]
+
+    if n_features == 0:
+        raise ValueError(
+            "No overlapping features available for drift detection. "
+            "Ensure current data contains at least one reference feature."
+        )
 
     return DatasetDriftResult(
         features=features,

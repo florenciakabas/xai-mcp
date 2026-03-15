@@ -263,6 +263,17 @@ class TestCPS3_ErrorHandling:
         assert "error_code" in result
         assert result["error_code"] == "SAMPLE_OUT_OF_RANGE"
 
+    def test_incompatible_model_schemas_return_structured_error(self):
+        """Cross-domain model comparison should fail safely."""
+        result = compare_predictions(
+            model_id_1="xgboost_breast_cancer",
+            model_id_2="lgbm_lubricant_quality",
+            sample_index=0,
+        )
+        assert "error_code" in result
+        assert result["error_code"] == "UNKNOWN_ERROR"
+        assert "same feature set" in result["message"]
+
 
 # ---------------------------------------------------------------------------
 # Cross-model consistency (bonus: data integrity)

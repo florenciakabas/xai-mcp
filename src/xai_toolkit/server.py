@@ -788,6 +788,16 @@ def compare_predictions(
             return result
         models_data.append((mid, result))
 
+    if set(models_data[0][1].X_test.columns) != set(models_data[1][1].X_test.columns):
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=(
+                f"Models '{model_id_1}' and '{model_id_2}' do not share the same feature set. "
+                "compare_predictions requires compatible models trained on the same schema."
+            ),
+            available=[model_id_1, model_id_2],
+        )
+
     # Use first model's test data (both share the same dataset)
     entry_1 = models_data[0][1]
 
@@ -806,6 +816,14 @@ def compare_predictions(
             error_code=ErrorCode.SAMPLE_OUT_OF_RANGE,
             message=str(e),
             available=[f"0\u2013{len(entry_1.X_test) - 1}"],
+        )
+    except ValueError as e:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=(
+                f"Unable to compare predictions for '{model_id_1}' and '{model_id_2}': {e}"
+            ),
+            available=[model_id_1, model_id_2],
         )
 
     narrative = narrate_prediction_comparison(comparison)
@@ -884,10 +902,16 @@ def detect_drift(model_id: str) -> dict:
             ),
         )
 
-    drift_result = compute_dataset_drift(
-        reference=entry.X_train,
-        current=entry.X_test,
-    )
+    try:
+        drift_result = compute_dataset_drift(
+            reference=entry.X_train,
+            current=entry.X_test,
+        )
+    except ValueError as e:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=f"Could not compute dataset drift for '{model_id}': {e}",
+        )
     narrative = narrate_dataset_drift(drift_result)
 
     return _build_response(
@@ -931,11 +955,17 @@ def detect_feature_drift(model_id: str, feature_name: str) -> dict:
             available=list(entry.X_train.columns),
         )
 
-    drift_result = compute_feature_drift(
-        reference=entry.X_train[feature_name],
-        current=entry.X_test[feature_name],
-        feature_name=feature_name,
-    )
+    try:
+        drift_result = compute_feature_drift(
+            reference=entry.X_train[feature_name],
+            current=entry.X_test[feature_name],
+            feature_name=feature_name,
+        )
+    except ValueError as e:
+        return _build_error(
+            error_code=ErrorCode.UNKNOWN_ERROR,
+            message=f"Could not compute feature drift for '{feature_name}': {e}",
+        )
     narrative = narrate_feature_drift(drift_result)
 
     return _build_response(

@@ -146,11 +146,18 @@ registry = ModelRegistry()
 registry.register_in_memory(
     model_id="lgbm_lubricant_quality",
     model=model,
+    metadata={
+        "model_type": "LGBMClassifier",
+        "dataset_name": "lubricant_quality",
+        "feature_names": FEATURE_NAMES,
+        "target_names": TARGET_NAMES,
+        "accuracy": float(accuracy),
+        "n_train_samples": len(X_train),
+        "n_test_samples": len(X_test),
+    },
     X_test=X_test,
     y_test=y_test,
     X_train=X_train,
-    feature_names=FEATURE_NAMES,
-    target_names=TARGET_NAMES,
 )
 print("Registered models:", registry.list_models())
 
@@ -166,13 +173,19 @@ from xai_toolkit.narrators import narrate_model_summary, narrate_intrinsic_impor
 
 reg = registry.get("lgbm_lubricant_quality")
 
-summary = compute_model_summary(reg)
+summary = compute_model_summary(reg.model, reg.X_test, reg.metadata, background_data=reg.X_train)
 print(narrate_model_summary(summary))
 print()
 
-intrinsic = extract_intrinsic_importances(reg)
+intrinsic = extract_intrinsic_importances(reg.model, reg.metadata["feature_names"])
 if intrinsic:
-    print(narrate_intrinsic_importance(intrinsic, reg.feature_names))
+    importances, source_attr = intrinsic
+    print(narrate_intrinsic_importance(
+        importances,
+        model_type=reg.metadata.get("model_type", "unknown"),
+        n_features_total=len(reg.metadata["feature_names"]),
+        source_attr=source_attr,
+    ))
 
 # COMMAND ----------
 
@@ -190,13 +203,17 @@ from xai_toolkit.plots import plot_shap_bar
 
 # Find a degraded sample
 degraded_idx = int(y_test[y_test == 1].index[0])
-shap_result = compute_shap_values(reg, sample_index=degraded_idx)
+shap_result = compute_shap_values(
+    reg.model, reg.X_test, sample_index=degraded_idx,
+    target_names=reg.metadata.get("target_names"),
+    background_data=reg.X_train,
+)
 
-print(narrate_prediction(shap_result, reg.target_names))
+print(narrate_prediction(shap_result))
 print()
 
 # Display SHAP bar chart
-plot_b64 = plot_shap_bar(shap_result, reg.feature_names)
+plot_b64 = plot_shap_bar(shap_result)
 if plot_b64:
     import base64
     from IPython.display import display, HTML
@@ -216,13 +233,13 @@ if plot_b64:
 from xai_toolkit.drift import detect_drift
 from xai_toolkit.narrators import narrate_dataset_drift, narrate_feature_drift
 
-drift_result = detect_drift(X_train, X_test, reg.feature_names)
+drift_result = detect_drift(X_train, X_test)
 print(narrate_dataset_drift(drift_result))
 print()
 
 # Per-feature narratives for drifted features
 for feat in drift_result.features:
-    if feat.drifted:
+    if feat.drift_detected:
         print(narrate_feature_drift(feat))
         print()
 
@@ -237,11 +254,14 @@ for feat in drift_result.features:
 # COMMAND ----------
 
 from xai_toolkit.explainers import compute_partial_dependence
+from xai_toolkit.narrators import narrate_partial_dependence
 from xai_toolkit.plots import plot_pdp_ice
 
-pdp_result = compute_partial_dependence(reg, feature_name="total_acid_number")
+pdp_result = compute_partial_dependence(reg.model, reg.X_test, feature_name="total_acid_number")
+print(narrate_partial_dependence(pdp_result))
+print()
 
-pdp_b64 = plot_pdp_ice(pdp_result, feature_name="total_acid_number")
+pdp_b64 = plot_pdp_ice(pdp_result)
 if pdp_b64:
     import base64
     from IPython.display import display, HTML
@@ -265,7 +285,7 @@ if pdp_b64:
 print("=" * 60)
 print("LAYER 1 — MODEL FACTS (grounded, deterministic)")
 print("=" * 60)
-print(narrate_prediction(shap_result, reg.target_names))
+print(narrate_prediction(shap_result))
 print()
 
 # Layer 2: Knowledge base retrieval

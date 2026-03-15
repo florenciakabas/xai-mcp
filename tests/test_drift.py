@@ -163,6 +163,17 @@ class TestDetectDrift:
         assert result.n_features == 1
         assert len(result.features) == 1
 
+    def test_no_overlapping_features_raises_value_error(self):
+        """Dataset-level drift requires at least one shared feature."""
+        ref = pd.DataFrame({"f_ref": _make_numeric_reference()})
+        cur = pd.DataFrame({"f_cur": _make_numeric_reference(seed=99)})
+
+        with pytest.raises(
+            ValueError,
+            match="No overlapping features available for drift detection",
+        ):
+            detect_drift(ref, cur)
+
 
 # ---------------------------------------------------------------------------
 # Group A5: PSI severity thresholds
@@ -305,3 +316,14 @@ class TestEdgeCases:
         result = detect_feature_drift(ref, cur, "low_card")
 
         assert result.test_name == "ks"  # PSI skipped
+
+    def test_all_nan_current_raises_value_error(self):
+        """All-NaN current data should fail with a clear error."""
+        ref = _make_numeric_reference()
+        cur = pd.Series([np.nan] * len(ref))
+
+        with pytest.raises(
+            ValueError,
+            match="no usable current samples after NaN filtering",
+        ):
+            detect_feature_drift(ref, cur, "all_nan_current")
