@@ -5,10 +5,10 @@
 # MAGIC %md
 # MAGIC # XAI Toolkit — Lubricant Quality Demo
 # MAGIC
-# MAGIC **Audience:** Reliability Engineering / Data Science teams using Kedro + LightGBM + Databricks
+# MAGIC **Audience:** Reliability Engineering / Data Science teams using Kedro + scikit-learn + Databricks
 # MAGIC
 # MAGIC This notebook demonstrates the full xai-toolkit workflow:
-# MAGIC 1. Train a LightGBM lubricant quality classifier
+# MAGIC 1. Train a Gradient Boosting lubricant quality classifier
 # MAGIC 2. Register the model
 # MAGIC 3. Generate deterministic, SHAP-backed explanations
 # MAGIC 4. Detect seasonal drift
@@ -19,7 +19,7 @@
 # COMMAND ----------
 
 # Setup: install xai-toolkit and restart Python
-# %pip install /Workspace/path/to/xai_toolkit-0.1.0-py3-none-any.whl lightgbm
+# %pip install /Workspace/path/to/xai_toolkit-0.1.0-py3-none-any.whl
 # dbutils.library.restartPython()  # noqa: F821
 
 import sys
@@ -114,15 +114,15 @@ X_train.head()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Train LightGBM Classifier
+# MAGIC ## 2. Train Gradient Boosting Classifier
 
 # COMMAND ----------
 
-from lightgbm import LGBMClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 
-model = LGBMClassifier(
+model = GradientBoostingClassifier(
     n_estimators=100, max_depth=5, learning_rate=0.1,
-    random_state=42, verbose=-1,
+    random_state=42,
 )
 model.fit(X_train, y_train)
 
@@ -144,10 +144,10 @@ from xai_toolkit.registry import ModelRegistry
 
 registry = ModelRegistry()
 registry.register_in_memory(
-    model_id="lgbm_lubricant_quality",
+    model_id="gbc_lubricant_quality",
     model=model,
     metadata={
-        "model_type": "LGBMClassifier",
+        "model_type": "GradientBoostingClassifier",
         "dataset_name": "lubricant_quality",
         "feature_names": FEATURE_NAMES,
         "target_names": TARGET_NAMES,
@@ -171,7 +171,7 @@ print("Registered models:", registry.list_models())
 from xai_toolkit.explainers import compute_model_summary, extract_intrinsic_importances
 from xai_toolkit.narrators import narrate_model_summary, narrate_intrinsic_importance
 
-reg = registry.get("lgbm_lubricant_quality")
+reg = registry.get("gbc_lubricant_quality")
 
 summary = compute_model_summary(reg.model, reg.X_test, reg.metadata, background_data=reg.X_train)
 print(narrate_model_summary(summary))
@@ -310,7 +310,54 @@ except Exception as e:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 9. Integration Paths
+# MAGIC ## 9. MLflow Integration Path
+# MAGIC
+# MAGIC This shows how the toolkit connects to YOUR workflow:
+# MAGIC train → log to MLflow → load from MLflow → register → explain in English.
+
+# COMMAND ----------
+
+import mlflow
+
+# Log the model we just trained
+with mlflow.start_run(run_name="lubricant_quality_demo"):
+    mlflow.sklearn.log_model(model, artifact_path="model")
+    mlflow.log_metric("accuracy", accuracy)
+    run_id = mlflow.active_run().info.run_id
+    print(f"Model logged to MLflow (run_id: {run_id})")
+
+# Load it back — proving the MLflow → toolkit path
+loaded_model = mlflow.sklearn.load_model(f"runs:/{run_id}/model")
+
+# Register with the toolkit — same 3 lines for ANY MLflow model
+from xai_toolkit.registry import ModelRegistry
+registry2 = ModelRegistry()
+registry2.register_in_memory(
+    model_id="from_mlflow",
+    model=loaded_model,
+    metadata={
+        "model_type": "GradientBoostingClassifier",
+        "feature_names": FEATURE_NAMES,
+        "target_names": TARGET_NAMES,
+        "accuracy": float(accuracy),
+    },
+    X_test=X_test, y_test=y_test, X_train=X_train,
+)
+
+# Now explain — same English, same determinism, model came from MLflow
+from xai_toolkit.explainers import compute_shap_values
+from xai_toolkit.narrators import narrate_prediction
+shap_result_mlflow = compute_shap_values(
+    loaded_model, X_test, sample_index=degraded_idx,
+    target_names=TARGET_NAMES, background_data=X_train,
+)
+print("Model loaded from MLflow → registered → explained:")
+print(narrate_prediction(shap_result_mlflow))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10. Integration Paths
 # MAGIC
 # MAGIC | Surface | How | Key Benefit |
 # MAGIC |---|---|---|
